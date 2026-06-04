@@ -38,6 +38,14 @@ function getModule(): typeof ESRModule | null {
   return moduleRef;
 }
 
+/**
+ * True when the native STT module is present (a dev/standalone build). False in
+ * Expo Go and on web, where the turn engine must fall back to typed text.
+ */
+export function isRecognitionAvailable(): boolean {
+  return getModule() != null;
+}
+
 type RecognitionHandlers = {
   result?: (e: ExpoSpeechRecognitionNativeEventMap['result']) => void;
   volumechange?: (e: ExpoSpeechRecognitionNativeEventMap['volumechange']) => void;

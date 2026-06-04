@@ -1,20 +1,16 @@
 /**
  * Network reachability (spec §10.2, §11.3). Drives the offline banner and the
  * "full conversation needs internet" degradation.
+ *
+ * Backed by expo-network (an Expo SDK module) rather than a community native
+ * module so it builds cleanly under the new architecture. `useNetworkState`
+ * sets up a listener and cleans up on unmount.
  */
-import { useEffect, useState } from 'react';
-import NetInfo from '@react-native-community/netinfo';
+import { useNetworkState } from 'expo-network';
 
 export function useNetwork(): boolean {
-  const [online, setOnline] = useState(true);
-
-  useEffect(() => {
-    NetInfo.fetch().then((s) => setOnline(s.isConnected !== false));
-    const unsubscribe = NetInfo.addEventListener((s) =>
-      setOnline(s.isConnected !== false),
-    );
-    return unsubscribe;
-  }, []);
-
-  return online;
+  const state = useNetworkState();
+  // Optimistic until the first reading arrives (state fields start undefined);
+  // only a definitive `false` flips us offline.
+  return state.isConnected !== false;
 }

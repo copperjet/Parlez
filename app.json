@@ -11,10 +11,15 @@
       "icon": "./assets/expo.icon",
       "supportsTablet": false,
       "infoPlist": {
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "NSSpeechRecognitionUsageDescription": "Parlez uses speech recognition so Marie can understand your French when you are offline.",
+        "NSMicrophoneUsageDescription": "Parlez listens to your voice so Marie can speak with you."
       }
     },
     "android": {
+      "package": "com.denny32.parlez",
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -22,7 +27,14 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["RECORD_AUDIO", "INTERNET"]
+      "permissions": [
+        "RECORD_AUDIO",
+        "INTERNET",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "web": {
       "output": "static",
@@ -34,7 +46,9 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#FBF9F6",
-          "dark": { "backgroundColor": "#15130F" },
+          "dark": {
+            "backgroundColor": "#15130F"
+          },
           "android": {
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
@@ -58,14 +72,27 @@
       [
         "expo-build-properties",
         {
-          "ios": { "deploymentTarget": "16.4" },
-          "android": { "minSdkVersion": 28 }
+          "ios": {
+            "deploymentTarget": "16.4"
+          },
+          "android": {
+            "minSdkVersion": 28
+          }
         }
-      ]
+      ],
+      "expo-asset",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0d1471e5-1964-4377-b247-1297815db065"
+      }
+    },
+    "owner": "denny-32"
   }
 }

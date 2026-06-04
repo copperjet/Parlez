@@ -21,6 +21,7 @@ import { MariePlayer } from '@/lib/audio/player';
 import { configureAudioSession, isAudibleVoice, volumeToAmplitude } from '@/lib/audio/recorder';
 import {
   abortRecognition,
+  isRecognitionAvailable,
   startRecognition,
   stopRecognition,
   subscribeRecognition,
@@ -61,6 +62,11 @@ export interface TurnEngine {
   onMicPress: () => void;
   /** Submit a typed turn — the accessibility / noisy-environment fallback (spec §4.4). */
   submitText: (text: string) => void;
+  /**
+   * True when the native speech recognizer is absent (Expo Go, web). The screen
+   * then drives a typed-text conversation instead of a dead listening loop.
+   */
+  sttUnavailable: boolean;
 }
 
 export function useTurnEngine(online: boolean): TurnEngine {
@@ -445,5 +451,6 @@ export function useTurnEngine(online: boolean): TurnEngine {
     micLevel,
     onMicPress: () => onMicPressRef.current(),
     submitText: (text: string) => submitTextRef.current(text),
+    sttUnavailable: !isRecognitionAvailable(),
   };
 }

@@ -63,10 +63,16 @@ function ConversationSession() {
   const errorNotice = useAppStore((s) => s.errorNotice);
   const setErrorNotice = useAppStore((s) => s.setErrorNotice);
 
-  const { micLevel, onMicPress, submitText } = useTurnEngine(online);
+  const { micLevel, onMicPress, submitText, sttUnavailable } = useTurnEngine(online);
 
   const [textMode, setTextMode] = useState(false);
   const [draft, setDraft] = useState('');
+
+  // No native speech recognizer (Expo Go / web): converse by typing. Keep the
+  // text input open so the mic is never a dead-end.
+  useEffect(() => {
+    if (sttUnavailable) setTextMode(true);
+  }, [sttUnavailable]);
 
   const listRef = useRef<FlatList<Message>>(null);
   const scrollToEnd = useCallback(() => {
@@ -98,10 +104,13 @@ function ConversationSession() {
     if (!text) return;
     submitText(text);
     setDraft('');
-    setTextMode(false);
+    if (!sttUnavailable) setTextMode(false);
   };
 
-  const banner = errorNotice ?? (!online ? 'You’re offline — full conversation needs internet.' : null);
+  const banner =
+    errorNotice ??
+    (sttUnavailable ? 'Voice needs the full Parlez app — type to chat with Marie here.' : null) ??
+    (!online ? 'You’re offline — full conversation needs internet.' : null);
   const bannerIsError = errorNotice != null;
 
   return (
@@ -182,20 +191,22 @@ function ConversationSession() {
               style={[styles.sendBtn, { backgroundColor: colors.accent }]}>
               <Ionicons name="arrow-up" size={22} color={colors.onAccent} />
             </Pressable>
-            <Pressable
-              onPress={() => setTextMode(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Close text input"
-              hitSlop={10}>
-              <Ionicons name="close" size={22} color={colors.textSecondary} />
-            </Pressable>
+            {sttUnavailable ? null : (
+              <Pressable
+                onPress={() => setTextMode(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close text input"
+                hitSlop={10}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </Pressable>
+            )}
           </View>
         ) : (
           <Waveform mode={waveMode} level={micLevel} />
         )}
           <MicButton
-            turnState={turnState}
-            onPress={onMicPress}
+            turnState={sttUnavailable ? 'idle' : turnState}
+            onPress={sttUnavailable ? () => setTextMode(true) : onMicPress}
             onLongPress={() => setTextMode(true)}
           />
         </View>
