@@ -1,0 +1,11 @@
+# Supabase project config for Parlez.
+# Link with: supabase link --project-ref <your-project-ref>
+project_id = "parlez"
+
+# The conversation BFF (spec §7.2). verify_jwt is off so the mobile client can
+# call them with the public anon key; the functions hold the real provider keys.
+[functions.turn]
+verify_jwt = false
+
+[functions.tts]
+verify_jwt = false

@@ -1,0 +1,631 @@
+PARLEZ
+Speak French. From day one.
+Product Specification
+iOS & Android  •  Version 1.0  •  May 2026
+
+Status: Draft for Review
+Owner: Product Team
+Platforms: iOS 16+ / Android 9+
+App Name: Parlez
+Doc Version: 1.0
+Last Updated: May 2026
+
+
+
+1. Product Overview
+
+
+1.1 The Problem
+Millions of people spend years learning French in school — memorising grammar rules, conjugation tables, and vocabulary lists — and still cannot hold a basic conversation. The failure is not theirs. Classroom French is built around reading and writing. Speaking is a different skill, and it only develops through practice.
+No app has solved this cleanly. Most pile on gamification, streak tracking, word drills, and badges. The learner is entertained but not speaking. Parlez removes everything except the one thing that works: real conversation.
+
+1.2 The Solution
+Parlez is a voice-first AI conversation app. The user opens the app and speaks French. The AI — a warm, patient French conversationalist named Marie — speaks back, listens, gently corrects mistakes, remembers what the user struggles with, and builds on every session. There is nothing else. No dashboard, no scores, no grammar lessons. Just the conversation.
+
+Core Principle: The only goal of this app is to get the user speaking French.
+Every design decision, feature, and AI behaviour must serve that goal. If it does not help the user speak, it does not ship.
+
+1.3 Target User
+Primary: Adults (18–45) who have some prior French education — school, university, or self-study — but have never reached spoken fluency. They know more French than they think they do. They are blocked by anxiety, lack of practice, and the absence of a judgment-free space to make mistakes.
+Secondary: Absolute beginners willing to learn by doing, not by drilling.
+The user's motivation is practical: travel, career, family, or a lifelong ambition to speak French. They are not hobbyists. They want to actually be able to speak, and they want to feel progress.
+
+1.4 North Star Metric
+Users who complete 10 sessions speak more French in session 10 than they did in session 1.
+This is the only success metric that matters at launch.
+
+
+2. Product Scope
+
+
+2.1 What Is In Scope
+Voice-based conversation with an AI in French
+Real-time speech-to-text and text-to-speech
+Inline spoken feedback and gentle corrections during conversation
+Session-persistent memory of user difficulties and vocabulary gaps
+Cross-session learning profile that grows over time
+Minimal onboarding (language level self-assessment only)
+Offline voice processing fallback (graceful degradation)
+iOS and Android native apps sharing a common backend
+
+2.2 What Is Explicitly Out of Scope
+The following will NOT be built for v1.0. These decisions are intentional, not oversights.
+
+Feature Excluded
+Reason
+Grammar lessons or explanations
+Corrections happen naturally in conversation, not as instruction
+Score, points, or streak tracking
+Gamification distracts from the goal; progress is felt, not counted
+Vocabulary flashcards or quizzes
+Vocabulary is acquired through use, not memorisation drills
+Progress dashboard or charts
+No metrics surfaced to user in v1.0
+Social features or leaderboards
+Learning is private; comparison creates anxiety
+Written text chat mode
+Voice is the product; text chat defeats the purpose
+Translation mode
+Full translations undermine speaking practice
+Multiple AI personas
+Marie is the product; consistency builds trust
+Curriculum or structured lessons
+Conversation is the curriculum
+Subscription tiers with limited sessions
+No artificial paywalls in core conversation flow
+
+3. User Flow
+
+
+3.1 First-Time User Flow
+
+Design principle: The user should be in their first conversation within 60 seconds of downloading the app.
+Onboarding is the enemy of starting. Keep it ruthlessly short.
+
+Step 1 — App Open (0–5 seconds)
+Splash screen with the app name and tagline. No animation longer than 1.5 seconds. Immediately proceeds to onboarding.
+
+Step 2 — Level Assessment (5–25 seconds)
+A single screen with one question and four choices. No account creation required at this stage.
+
+Screen title: "How much French do you know?"
+Option A: "Nothing yet — I'm starting fresh"
+Option B: "A little — I know some words and phrases"
+Option C: "Some — I studied French before but can't really speak it"
+Option D: "Decent — I can have basic conversations"
+The selected level seeds Marie's initial conversation difficulty. It is not shown to the user again. No labels like 'beginner' or 'intermediate' are used.
+
+Step 3 — Microphone Permission (25–35 seconds)
+Standard OS permission prompt. Preceded by a single sentence explaining why: "Parlez listens to your voice so Marie can speak with you." If denied, the app shows a friendly prompt to enable permissions in Settings before proceeding.
+
+Step 4 — Introduction (35–60 seconds)
+Marie speaks first. Her opening is always warm, brief, and in French — calibrated to the chosen level. A gentle prompt appears on screen: "Respond when you're ready. Tap the mic or just speak."
+The user is now in conversation. Onboarding is over.
+
+3.2 Returning User Flow
+Returning users go directly to the conversation screen. There is no home screen. Marie acknowledges that they have spoken before and picks up where the conversation left off thematically — or begins a fresh topic if the last session was more than 48 hours ago.
+No login screen (account optional; sessions stored locally and synced when account exists)
+Session history is used by the AI but not shown to the user
+Load time from app open to Marie speaking: under 3 seconds
+
+3.3 In-Session Flow
+User opens the conversation screen
+Marie speaks (audio plays, animated waveform shown)
+Recording indicator activates. User speaks in French, English, or a mix
+Speech-to-text transcribes in real time. Transcription shown on screen as faint text while recording
+User finishes speaking (silence detection or manual tap)
+AI processes response. Brief thinking animation displayed
+Marie speaks her response. Text shown on screen simultaneously for reference
+Repeat from step 3
+
+3.4 Session End Flow
+There is no formal session end. The user simply closes the app or navigates away. The AI does not ask "Are you done?" When the app reopens, Marie's first words acknowledge the gap since last time, naturally.
+
+
+4. Conversation Interface
+
+
+4.1 Screen Layout
+The conversation screen is the entire app. There is no navigation bar, no menu, no sidebar. One screen, one purpose.
+
+Zone
+Content & Behaviour
+Top bar
+Marie's name and avatar (left). Settings icon (right). No other elements.
+Conversation area
+Scrollable. Shows current and recent exchanges as speech bubbles. Marie left, user right. Correction cards appear inline below Marie's bubble.
+Waveform zone
+Visual feedback showing Marie speaking (animated) or user speaking (live waveform). Quiet when neither is talking.
+Mic button
+Large central button. Tap to speak / tap to stop. Auto-activates after Marie finishes speaking (with brief 0.8s grace period).
+
+4.2 Speech Bubbles
+Marie's bubbles: left-aligned, soft background colour
+User's bubbles: right-aligned, accent colour
+Each bubble shows the spoken text as it was said (not corrected) — accuracy matters for the user seeing their own French
+Correction cards appear as a small card directly below a Marie bubble, only when a correction is warranted
+Bubbles older than the last 4 exchanges are scrolled out of view but accessible by scrolling up
+
+4.3 Correction Cards
+When Marie identifies a meaningful error, a correction card appears inline below her response. It is compact, non-alarming, and immediately clear.
+
+Format: What you said → What to say
+English gloss if the grammar point benefits from a brief explanation (one line maximum)
+Corrections appear for at most 1–2 errors per turn to avoid overwhelming the user
+Minor errors (accent marks, minor mispronunciation) are noted naturally in Marie's speech, not as cards
+The card disappears from view as conversation scrolls but remains in scroll history
+
+4.4 Input Modes
+Primary: Voice. The mic button is always prominent.
+Fallback: If the user long-presses the mic button, a text input field appears. This is for accessibility and noisy environments only — it is not promoted.
+Language mixing is allowed: the user may speak in English or a mix. Marie always responds in French, with contextual support.
+
+4.5 Settings Screen
+Accessed via the settings icon in the top bar. This screen contains only:
+Speech speed: slider from Slow / Normal / Fast (controls Marie's TTS playback speed)
+Marie's voice: choice of 2–3 distinct French voices (all native-quality TTS)
+Microphone sensitivity: Auto / Manual threshold
+Haptic feedback: On / Off
+Account: Sign in / Sign up (optional, enables cross-device sync)
+Clear session history: Resets Marie's memory of the user (with confirmation)
+Nothing else. No notification settings, no theme options, no language settings (French is the language; this is not configurable).
+
+5. AI Conversation Engine
+
+
+Marie is not a chatbot with French responses. Marie is a skilled language tutor whose method is natural conversation.
+The distinction is critical: every response serves the user's speaking development, not just the conversational thread.
+
+5.1 Persona
+Attribute
+Specification
+Name
+Marie
+Character
+Warm, patient, encouraging, genuinely curious about the user's life
+Tone
+Like a French friend helping you practice — not a teacher grading you
+Language default
+French-first, always. Code-switches to English only when a correction or explanation genuinely requires it
+Correction style
+Integrates corrections naturally into conversation before adding a correction card when needed
+Patience
+Never rushes the user. Comfortable with pauses and hesitation.
+Encouragement
+Genuine, specific, and never condescending
+
+5.2 Language Level Adaptation
+Marie adapts her vocabulary, sentence length, and grammatical complexity to the user's current ability in real time — not just based on the onboarding level.
+
+Level A (beginner): Short sentences, common vocabulary, speaks slower, repeats key phrases, asks simple yes/no or choice questions
+Level B (elementary/pre-intermediate): Longer sentences, introduces past tense, asks open questions, uses everyday idioms with brief explanations
+Level C (intermediate): Natural speed, full range of tenses, cultural references, challenges user to elaborate and explain
+Progression: Marie promotes the user's internal level when they consistently handle current-level responses without errors. This is invisible to the user.
+Regression: Marie reduces complexity temporarily if the user is struggling, without comment. She never tells the user their level.
+
+5.3 Correction Behaviour
+The correction framework is central to the app's pedagogy. It is built around one principle: corrections must not interrupt the flow of conversation or make the user feel judged.
+
+5.3.1 Correction Tiers
+Tier
+Type of Error
+Marie's Response
+Tier 1
+Minor: accent, liaison, minor mispronunciation
+Uses the correct form naturally in her reply. No card. No comment.
+Tier 2
+Meaningful: wrong tense, incorrect gender, word order
+Incorporates the correct form into her reply ('Oui, tu es allé — et moi aussi...'). Generates a correction card.
+Tier 3
+Communication-breaking: meaning unclear or lost
+Gently asks for clarification in French, offering scaffolding. Uses the opportunity to model the correct expression.
+
+5.3.2 Correction Limits
+Maximum 2 correction cards per AI turn
+If the user makes 4+ errors in one turn, Marie addresses the 1–2 most important ones only
+Consecutive turns: if the same error recurs, Marie addresses it once more clearly, then notes it in the learning profile
+Marie never says 'That was wrong' or 'You made a mistake'. She models correct usage.
+
+5.4 Memory and Learning Profile
+The learning profile is the intelligence layer that makes Parlez more useful over time. It is maintained per-user, persists across sessions, and is invisible to the user.
+
+5.4.1 What Is Tracked
+Recurring grammatical errors (e.g., consistent confusion with passé composé vs imparfait)
+Vocabulary gaps (words the user avoids or substitutes with English)
+Topics the user engages with confidently vs. hesitantly
+Pronunciation patterns (from STT confidence scores)
+Speaking pace and length of turns over time
+Overall level trajectory (rising, plateauing, or struggling)
+
+5.4.2 How Memory Is Used
+Marie revisits tracked difficulty areas naturally in conversation ('À propos, tu m'as parlé de ton travail — c'est quoi exactement?')
+Marie does not say 'You often struggle with X'. She addresses it through practice.
+At the start of a new session, Marie acknowledges the previous conversation and uses tracked profile to pitch her opening at the right level
+Memory is stored locally on-device and optionally synced to a user account
+Memory resets only on explicit user request (see Settings)
+
+5.5 Conversation Topics
+Marie drives the conversation with natural, engaging topics. She rotates through topic domains to give the user practice across different vocabulary areas. She always uses a topic that connects to something the user has mentioned before when possible.
+
+Domain
+Example Topics
+Daily life
+Morning routines, meals, commute, weekend plans
+Personal
+Family, friends, hometown, where they live
+Work & study
+Job, studies, ambitions, colleagues
+Travel
+Places visited, dream destinations, experiences abroad
+Culture & tastes
+Films, music, books, sport, food
+French culture
+Parisian life, French customs, regional differences, food culture
+Opinions
+Simple debates on familiar topics at higher levels
+
+Marie always asks one question per turn. She does not ask two questions. If she has multiple things to say, she chooses the most relevant question and lets the conversation develop.
+
+
+6. Speech Technology
+
+
+6.1 Speech-to-Text (STT)
+The STT layer must handle French with French accents reliably — including non-native speakers speaking with English-language interference patterns.
+
+Requirement
+Specification
+Primary engine
+OpenAI Whisper (large-v3 or equivalent) via API, or on-device for offline fallback
+Language target
+French (fr-FR) with automatic code-switch detection for English words
+Latency
+Transcription available within 800ms of user finishing speaking
+Silence detection
+Auto-stop after 1.5s of silence following at least 0.5s of speech
+Minimum utterance
+Processes utterances as short as a single word
+Noise handling
+Background noise suppression applied before STT processing
+Confidence score
+STT confidence passed to AI to flag uncertain transcriptions
+Offline mode
+On-device STT (reduced accuracy acceptable) if network unavailable
+
+6.2 Text-to-Speech (TTS)
+Marie's voice is the product. It must be natural, warm, and clearly French — not robotic, not generic, not generic-European.
+
+Requirement
+Specification
+Engine
+ElevenLabs or equivalent neural TTS with French voice quality
+Voices available
+2–3 distinct options: one female (default), one male, one alternative female
+Accent
+Standard French (Parisian); not Canadian, not heavily regional
+Expressiveness
+Prosody must feel conversational — rises, pauses, warmth — not flat readout
+Speed control
+User-adjustable: 0.75x (slow), 1.0x (normal), 1.25x (fast)
+Latency
+Audio begins playing within 1.5 seconds of AI response being ready
+Audio output
+Plays through device speaker by default; respects headphone connection automatically
+Interruption
+User can tap mic to interrupt Marie mid-speech; audio stops immediately
+
+6.3 Turn Management
+Natural conversation has rhythm. The app must not feel like a push-to-talk radio. The following rules govern turn-taking:
+
+Marie finishes speaking before the mic activates for the user
+0.8-second grace pause after Marie finishes before mic auto-activates (prevents user rushing)
+Visual mic-active indicator appears clearly when the user's turn begins
+User can tap the mic at any time to interrupt Marie (Marie stops speaking)
+If the user is silent for 4 seconds after the mic activates, Marie offers a gentle prompt in French ('Tu veux dire quelque chose?')
+If silence continues for 8 more seconds, Marie continues the conversation with a simpler question
+
+7. Technical Architecture
+
+
+7.1 Architecture Overview
+
+Architecture principle: The app is a thin, fast client. Heavy processing (AI, STT, TTS) lives in the cloud.
+The client handles only: recording, playback, UI rendering, local storage, and API orchestration.
+
+7.2 Component Map
+Component
+Location
+Responsibility
+Mobile App
+Client (iOS/Android)
+UI, recording, playback, local storage, API calls
+STT Service
+Cloud (Whisper API)
+Convert user audio to French text transcript
+AI Engine
+Cloud (Claude API)
+Generate Marie's conversational response
+TTS Service
+Cloud (ElevenLabs API)
+Convert Marie's text response to audio
+Learning Profile
+Local + Cloud sync
+Store and retrieve per-user learning data
+Session Store
+Local SQLite
+Store conversation history for current and recent sessions
+Sync Backend
+Cloud (optional)
+Cross-device sync when user account exists
+
+7.3 Per-Turn Latency Budget
+A conversational app lives or dies by latency. The following targets must be met for the app to feel natural:
+
+Step
+Target (P50)
+Maximum (P95)
+User finishes → STT complete
+600ms
+1,000ms
+STT complete → AI response ready
+800ms
+1,500ms
+AI ready → TTS audio starts
+700ms
+1,200ms
+Total (user finishes → Marie speaks)
+2.1 seconds
+3.5 seconds
+
+TTS streaming must begin before the full audio is generated — first audio chunk should play within 700ms of TTS request.
+
+7.4 Mobile Stack
+Layer
+Technology
+Notes
+Framework
+React Native (Expo)
+Single codebase for iOS and Android
+Audio recording
+expo-av / react-native-audio
+PCM capture at 16kHz, 16-bit mono for STT
+Audio playback
+expo-av
+Streams TTS audio chunks as they arrive
+Local storage
+expo-sqlite
+Conversation history and learning profile
+State management
+Zustand
+Lightweight; minimal global state
+Networking
+Fetch API / axios
+All API calls go through a thin BFF layer
+Offline detection
+NetInfo
+Switches to on-device STT when offline
+
+7.5 AI System Prompt Design
+Marie's personality, behaviour, and correction logic are encoded in a structured system prompt sent with every API call. The system prompt includes:
+
+Persona definition (warmth, patience, curiosity, French-first language policy)
+Level instructions (derived from onboarding and current profile estimate)
+Learning profile summary (recurring errors, flagged gaps, topics discussed)
+Correction behaviour rules (tiers, maximum corrections per turn, natural integration)
+Turn structure rules (one question per turn, do not lecture, do not explain grammar unless asked)
+Session context (how long since last session, what was discussed last time)
+Output format rules (main response, correction card data as structured JSON, note-to-self for profile update)
+
+The AI response is structured JSON, not plain text.
+Fields: speech_text (what Marie says), corrections[] (array of correction card objects), profile_notes[] (internal observations to store), level_signal (up/down/hold).
+The app renders the speech_text as audio via TTS and displays corrections as cards. Profile notes are stored silently.
+
+
+8. Data & Privacy
+
+
+8.1 Data Collected
+Data Type
+Storage Location
+Retention
+Voice audio
+Processed in memory only; never persisted
+Deleted after STT processing
+Transcribed text
+Local device + optional cloud sync
+Until user clears history
+Marie's responses (text)
+Local device + optional cloud sync
+Until user clears history
+Learning profile
+Local device + optional cloud sync
+Until user clears history
+Onboarding level choice
+Local only
+Until user clears history
+Account data (email)
+Cloud only (if account created)
+Until account deletion
+Crash / error logs
+Cloud (anonymised)
+30 days
+
+8.2 Privacy Principles
+Voice audio is never stored. It is transcribed and discarded.
+No third-party advertising SDKs are included in the app.
+The learning profile is never shared with third parties.
+Cloud sync is opt-in. The app is fully functional without an account.
+Users can delete all data at any time from within the app.
+GDPR and CCPA compliant at launch.
+
+9. Platform Requirements
+
+
+9.1 iOS
+Minimum version: iOS 16.0
+Device support: iPhone SE (2nd gen) and above; no iPad-specific layout for v1.0
+Distribution: App Store
+Required permissions: Microphone, optionally Speech Recognition (for on-device fallback)
+Background audio: Marie's voice continues if the app is backgrounded during playback
+Dynamic Type: minimum support for user font size preferences
+Dark Mode: full support
+Haptic feedback: uses UIImpactFeedbackGenerator for mic activation and send
+
+9.2 Android
+Minimum version: Android 9.0 (API 28)
+Device support: phones only; 360dp minimum width
+Distribution: Google Play Store
+Required permissions: RECORD_AUDIO, INTERNET
+Audio focus: requests AUDIOFOCUS_GAIN_TRANSIENT for recording, releases on stop
+Dark Mode: full Material You dark theme support
+Back gesture: pressing back during conversation prompts 'End conversation?' — does not immediately exit
+
+9.3 Shared Requirements
+Network: 3G minimum for cloud APIs; graceful offline degradation with on-device STT
+Screen sizes: 5.0" to 6.9" phone screens; no tablet-optimised layout in v1.0
+Accessibility: VoiceOver (iOS) and TalkBack (Android) support for all interactive elements
+Localisation: app UI in English only for v1.0 (the learning experience is French)
+
+10. Performance & Quality
+
+
+10.1 Performance Targets
+Metric
+Target
+Hard Limit
+App cold start to conversation screen
+< 2.0s
+3.0s
+End-to-end turn latency (user stops → Marie starts)
+< 2.5s
+4.0s
+STT accuracy (non-native French speaker)
+> 85%
+> 75%
+App crash rate
+< 0.1%
+< 0.5%
+Background memory usage (iOS)
+< 60MB
+< 100MB
+Battery drain per 20-min session
+< 5%
+< 8%
+API error rate (all services)
+< 1%
+< 2%
+
+10.2 Error Handling
+STT failure: display 'I didn’t catch that — try again?' on screen; Marie speaks it too
+AI API failure: Marie says she is having a small problem and will be back in a moment; retry automatically after 3 seconds
+TTS failure: show Marie’s text response on screen with a replay icon; do not block conversation
+No internet: show offline banner; switch to on-device STT; AI responses served from a small local fallback model if possible, or show a message that full conversation requires internet
+All error messages are in English for clarity; Marie’s in-conversation error messages are in French
+
+
+11. Launch Requirements
+
+
+11.1 Must-Have for Launch (P0)
+Voice conversation with Marie end-to-end
+STT in French with English code-switch handling
+Marie TTS with at least 1 voice
+Real-time correction cards (Tier 1 and Tier 2)
+Learning profile: error tracking and cross-session persistence
+Onboarding level assessment (4 options)
+Settings: speech speed, voice selection
+Offline fallback with on-device STT
+iOS 16+ and Android 9+ native app builds
+Privacy policy and data deletion flow
+
+11.2 Should-Have Before Launch (P1)
+Cross-device sync (account sign-in)
+2–3 TTS voice options
+Haptic feedback
+Text input fallback (accessibility)
+Background audio on iOS
+
+11.3 Will Not Ship at Launch (P2)
+Anything in Section 2.2 (Out of Scope)
+Tablet layout
+Multiple languages beyond French
+Offline AI conversation fallback
+
+12. Success Metrics
+
+
+Parlez does not use engagement metrics as a success measure. Time spent in the app is not a goal. A user who has three 10-minute sessions a week and is visibly improving is a perfect user.
+
+12.1 Metrics Tracked (Internal Only)
+Metric
+What It Tells Us
+Session completion rate
+Did users finish a full conversation or drop off early?
+Sessions per week per user
+Are users forming a habit?
+Turn count per session
+Are users engaging or giving up quickly?
+AI level trajectory
+Is the AI correctly detecting user improvement?
+Error correction recurrence
+Are corrections actually reducing error rates over time?
+STT confidence score distribution
+Are users' pronunciation improving?
+D7 / D30 retention
+Are users coming back after a week and a month?
+
+None of these metrics are shown to the user. They inform product improvement only.
+
+13. Open Questions
+
+
+The following decisions are outstanding and must be resolved before development begins:
+
+Question
+Options
+Owner
+On-device AI for offline mode: feasible at acceptable quality?
+Llama 3 on-device vs. queue + retry
+Engineering
+Account creation: required from day 1 or purely optional?
+Optional vs. prompted after session 3
+Product
+Monetisation model for v1.0
+Freemium (session cap) vs. subscription vs. free
+Product / Business
+TTS provider: ElevenLabs vs. Azure vs. Google Neural TTS
+Cost, quality, latency trade-offs
+Engineering
+STT provider fallback chain if Whisper API is unavailable
+Azure Speech vs. on-device
+Engineering
+
+Appendix: Glossary
+
+
+Term
+Definition
+STT
+Speech-to-Text: converts the user's spoken audio to a text transcript
+TTS
+Text-to-Speech: converts Marie's text response to spoken audio
+Turn
+One complete exchange: user speaks, Marie responds
+Learning Profile
+The per-user data store of recurring errors, vocabulary gaps, and level trajectory
+Level Signal
+A flag in the AI's structured response indicating whether to raise, hold, or lower complexity
+BFF
+Backend For Frontend: a thin server layer that orchestrates STT, AI, and TTS API calls on behalf of the app
+Tier 1/2/3
+The three levels of correction behaviour defined in Section 5.3.1
+Passé composé
+A common French past tense; one of the most frequent error areas for English speakers
+Code-switch
+Switching between French and English mid-sentence; common in learner speech
+P50 / P95
+Latency percentiles: P50 = median, P95 = 95th percentile (worst 5% of requests)
+
+
+
+End of Document  —  Parlez Product Specification v1.0
