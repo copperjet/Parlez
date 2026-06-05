@@ -8,26 +8,49 @@
  */
 import { SPEECH_SPEEDS, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
 import { ENV, functionsBase } from '@/lib/env';
+import { getCallerId } from '@/lib/revenuecat';
+import { supabase } from '@/lib/supabase';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import type { Correction, LevelSignal, TurnContext, TurnResponse } from '@/lib/types';
 
 import type { ConversationService, SynthesizedSpeech, TurnInput } from './conversation';
 
 type TurnMode = 'open' | 'reply' | 'silence';
 
-/** MIME type for the recorder's audio file, inferred from its extension. */
-function audioMime(ext: string): string {
-  if (ext === 'caf') return 'audio/x-caf';
-  if (ext === 'm4a') return 'audio/m4a';
-  if (ext === 'mp3') return 'audio/mpeg';
-  return 'audio/wav';
+/** Sentinel error thrown when the server returns a 402 daily-cap response. */
+export class DailyCapError extends Error {
+  constructor(
+    public readonly tier: 'monthly' | 'annual' | 'lifetime',
+    public readonly capSeconds: number,
+  ) {
+    super('daily_cap');
+    this.name = 'DailyCapError';
+  }
 }
 
-function authHeaders(): Record<string, string> {
+/**
+ * Build the headers for an edge-fn call. Prefer the signed-in user's JWT so
+ * the server can resolve auth.uid() in RLS / `usage_events.is_anon = false`;
+ * fall back to the anon key when no session exists. The apikey header stays
+ * the anon key in both cases (Supabase requires it for routing).
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  let token = ENV.supabaseAnonKey;
+  if (supabase) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const access = data.session?.access_token;
+      if (access) token = access;
+    } catch {
+      // fall through to anon key
+    }
+  }
   return {
     apikey: ENV.supabaseAnonKey,
-    Authorization: `Bearer ${ENV.supabaseAnonKey}`,
+    Authorization: `Bearer ${token}`,
   };
 }
+
 
 /** Trim the context to what the BFF needs — recent text only, never audio. */
 function serializeContext(ctx: TurnContext) {
@@ -35,6 +58,10 @@ function serializeContext(ctx: TurnContext) {
     level: ctx.level,
     profileSummary: ctx.profileSummary,
     gapSinceLastSession: ctx.gapSinceLastSession,
+    personaName: ctx.personaName,
+    learnerName: ctx.learnerName ?? null,
+    interests: ctx.interests ?? [],
+    streakDays: ctx.streakDays ?? 0,
     history: ctx.history.slice(-10).map((m) => ({ speaker: m.speaker, text: m.text })),
   };
 }
@@ -49,12 +76,26 @@ function parseTurnResponse(raw: unknown): TurnResponse {
     ? (r.profileNotes as unknown[]).filter((n): n is string => typeof n === 'string')
     : [];
   const signal = r.levelSignal;
+  const learnerName =
+    typeof r.learnerName === 'string' && r.learnerName.trim()
+      ? r.learnerName.trim()
+      : null;
+  const interests = Array.isArray(r.interests)
+    ? (r.interests as unknown[])
+        .filter((i): i is string => typeof i === 'string')
+        .map((i) => i.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
   return {
     transcript: typeof r.transcript === 'string' ? r.transcript : '',
     speechText: typeof r.speechText === 'string' ? r.speechText : '',
+    translation: typeof r.translation === 'string' ? r.translation : undefined,
     corrections,
     profileNotes,
     levelSignal: (signal === 'up' || signal === 'down' ? signal : 'hold') as LevelSignal,
+    learnerName,
+    interests,
   };
 }
 
@@ -68,22 +109,49 @@ async function callTurn(
   form.append('context', JSON.stringify(serializeContext(ctx)));
   if (opts.simpler != null) form.append('simpler', String(opts.simpler));
   if (opts.text) form.append('text', opts.text);
+
+  // Identify the caller for server-side usage attribution + cap enforcement.
+  // Signed-in users are also identified via JWT; passing this is harmless and
+  // keeps the anonymous path working.
+  const appUserId = await getCallerId();
+  if (appUserId) form.append('app_user_id', appUserId);
+
   if (opts.audioUri) {
-    // The recognizer persists a .wav (or .caf on iOS); match name + type to it.
+    // The recognizer persists a .wav (or .caf on iOS); keep the extension so
+    // Whisper detects the format.
     const ext = (opts.audioUri.split('.').pop() ?? 'wav').toLowerCase();
-    // React Native FormData file shape.
-    form.append('audio', {
-      uri: opts.audioUri,
-      name: `turn.${ext}`,
-      type: audioMime(ext),
-    } as unknown as Blob);
+    // Read the file into a real Blob. The React Native { uri, name, type } file
+    // shape throws "Unsupported FormDataPart implementation" under the runtime's
+    // fetch; fetching the file URI yields a Blob that FormData accepts.
+    const fileRes = await fetch(opts.audioUri);
+    const blob = await fileRes.blob();
+    form.append('audio', blob, `turn.${ext}`);
   }
 
+  const headers = await authHeaders();
   const res = await fetch(`${functionsBase()}/turn`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers,
     body: form,
   });
+  if (res.status === 402) {
+    // Daily cap hit server-side. Surface to the store + throw a typed sentinel
+    // the turn engine catches without retrying.
+    let parsed: { tier?: string; cap_seconds?: number } = {};
+    try {
+      parsed = (await res.json()) as { tier?: string; cap_seconds?: number };
+    } catch {
+      // body wasn't JSON; ignore
+    }
+    const tier =
+      parsed.tier === 'monthly' || parsed.tier === 'annual' || parsed.tier === 'lifetime'
+        ? parsed.tier
+        : 'monthly';
+    const capSeconds =
+      typeof parsed.cap_seconds === 'number' ? parsed.cap_seconds : 1800;
+    useSubscriptionStore.getState().setCapBlocked({ tier, capSeconds });
+    throw new DailyCapError(tier, capSeconds);
+  }
   if (!res.ok) {
     throw new Error(`turn failed: ${res.status}`);
   }
@@ -117,15 +185,17 @@ export function createSupabaseService(): ConversationService {
     ): Promise<SynthesizedSpeech> {
       // The player streams the audio directly from the tts function so the
       // first chunk arrives fast (spec §6.2). Auth travels as a header.
+      const appUserId = await getCallerId();
       const params = new URLSearchParams({
         text,
         voice,
         speed: String(SPEECH_SPEEDS[speed]),
       });
+      if (appUserId) params.append('app_user_id', appUserId);
       return {
         uri: `${functionsBase()}/tts?${params.toString()}`,
         durationMs: estimateDuration(text, speed),
-        headers: authHeaders(),
+        headers: await authHeaders(),
       };
     },
   };

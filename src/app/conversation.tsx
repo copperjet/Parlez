@@ -24,11 +24,14 @@ import {
   Waveform,
   type WaveformMode,
 } from '@/components';
+import { PaywallGate } from '@/components/PaywallGate';
+import { voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useNetwork } from '@/lib/useNetwork';
 import { useTurnEngine } from '@/lib/turnStateMachine';
 import type { Message, TurnState } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 function waveformModeFor(turnState: TurnState): WaveformMode {
   if (turnState === 'marie_speaking') return 'marie';
@@ -36,10 +39,22 @@ function waveformModeFor(turnState: TurnState): WaveformMode {
   return 'idle';
 }
 
-function MessageRow({ message }: { message: Message }) {
+function MessageRow({
+  message,
+  onReplay,
+}: {
+  message: Message;
+  onReplay: (text: string) => void;
+}) {
   return (
     <View>
-      <SpeechBubble speaker={message.speaker} text={message.text} faint={message.pending} />
+      <SpeechBubble
+        speaker={message.speaker}
+        text={message.text}
+        translation={message.translation}
+        faint={message.pending}
+        onReplay={message.speaker === 'marie' ? () => onReplay(message.text) : undefined}
+      />
       {message.corrections?.map((c, i) => (
         <CorrectionCard key={`${message.id}-c${i}`} correction={c} />
       ))}
@@ -63,7 +78,8 @@ function ConversationSession() {
   const errorNotice = useAppStore((s) => s.errorNotice);
   const setErrorNotice = useAppStore((s) => s.setErrorNotice);
 
-  const { micLevel, onMicPress, submitText, sttUnavailable } = useTurnEngine(online);
+  const { micLevel, onMicPress, submitText, sttUnavailable, replay } = useTurnEngine(online);
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   const [textMode, setTextMode] = useState(false);
   const [draft, setDraft] = useState('');
@@ -80,8 +96,8 @@ function ConversationSession() {
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: Message }) => <MessageRow message={item} />,
-    [],
+    ({ item }: { item: Message }) => <MessageRow message={item} onReplay={replay} />,
+    [replay],
   );
 
   const waveMode = useMemo(() => waveformModeFor(turnState), [turnState]);
@@ -90,14 +106,14 @@ function ConversationSession() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      Alert.alert('End conversation?', 'Marie will be here when you come back.', [
+      Alert.alert('End conversation?', `${personaName} will be here when you come back.`, [
         { text: 'Stay', style: 'cancel' },
         { text: 'End', style: 'destructive', onPress: () => BackHandler.exitApp() },
       ]);
       return true;
     });
     return () => sub.remove();
-  }, []);
+  }, [personaName]);
 
   const sendDraft = () => {
     const text = draft.trim();
@@ -109,7 +125,9 @@ function ConversationSession() {
 
   const banner =
     errorNotice ??
-    (sttUnavailable ? 'Voice needs the full Parlez app — type to chat with Marie here.' : null) ??
+    (sttUnavailable
+      ? `Voice needs the full Parlez app — type to chat with ${personaName} here.`
+      : null) ??
     (!online ? 'You’re offline — full conversation needs internet.' : null);
   const bannerIsError = errorNotice != null;
 
@@ -216,13 +234,103 @@ function ConversationSession() {
 }
 
 /**
+ * Sheet that overlays the conversation when the user has hit their daily cap.
+ * Upgrade path is the primary CTA (Hormozi: the cap is the offer).
+ */
+function CapSheet() {
+  const { colors } = useTheme();
+  const router = useRouter();
+  const capBlocked = useSubscriptionStore((s) => s.capBlocked);
+  const tier = useSubscriptionStore((s) => s.capBlockedTier);
+  const capSeconds = useSubscriptionStore((s) => s.tierCapSeconds);
+  const clear = useSubscriptionStore((s) => s.clearCapBlocked);
+
+  if (!capBlocked || !tier) return null;
+
+  const capMinutes = capSeconds ? Math.round(capSeconds / 60) : 30;
+  const headline =
+    tier === 'monthly'
+      ? `You've used your daily ${capMinutes} minutes.`
+      : `You've reached today's ${capMinutes} minute limit.`;
+  const sub =
+    tier === 'monthly'
+      ? 'Annual unlocks 90 minutes a day — three times the practice for less than half the monthly rate.'
+      : 'Come back tomorrow, or upgrade to Lifetime for unlimited practice.';
+  const ctaLabel = tier === 'monthly' ? 'Upgrade to Annual' : 'See Lifetime';
+
+  return (
+    <View style={[capStyles.backdrop, { backgroundColor: 'rgba(0,0,0,0.55)' }]}>
+      <View style={[capStyles.sheet, { backgroundColor: colors.surface }]}>
+        <Text style={[capStyles.title, { color: colors.text }]}>{headline}</Text>
+        <Text style={[capStyles.sub, { color: colors.textSecondary }]}>{sub}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={ctaLabel}
+          onPress={() => {
+            clear();
+            router.push(('/paywall?reason=cap') as never);
+          }}
+          style={[capStyles.cta, { backgroundColor: colors.accent }]}>
+          <Text style={[capStyles.ctaText, { color: colors.onAccent }]}>{ctaLabel}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Continue tomorrow"
+          onPress={clear}
+          hitSlop={8}
+          style={capStyles.dismiss}>
+          <Text style={[capStyles.dismissText, { color: colors.textSecondary }]}>
+            Continue tomorrow
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/**
  * The conversation screen — the entire app (spec §4.1). One screen: Marie's
  * header, the scrolling transcript, the waveform, and the mic button.
  */
 export default function Conversation() {
   const sessionEpoch = useAppStore((s) => s.sessionEpoch);
-  return <ConversationSession key={sessionEpoch} />;
+  return (
+    <PaywallGate>
+      <ConversationSession key={sessionEpoch} />
+      <CapSheet />
+    </PaywallGate>
+  );
 }
+
+const capStyles = StyleSheet.create({
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    alignSelf: 'stretch',
+    margin: Spacing.lg,
+    padding: Spacing.lg,
+    borderRadius: Radius.lg,
+    gap: Spacing.sm,
+  },
+  title: { fontSize: FontSize.bubble, fontWeight: '700' },
+  sub: { fontSize: FontSize.body, lineHeight: FontSize.body * 1.4 },
+  cta: {
+    marginTop: Spacing.sm,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+  },
+  ctaText: { fontSize: FontSize.body, fontWeight: '700' },
+  dismiss: { alignItems: 'center', paddingVertical: Spacing.sm },
+  dismissText: { fontSize: FontSize.caption, fontWeight: '500' },
+});
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },

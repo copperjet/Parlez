@@ -2,15 +2,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
+import { useAppStore } from '@/stores/appStore';
 
 /**
- * The conversation screen's only chrome (spec §4.1): Marie's name + avatar on the
- * left, a settings icon on the right. Nothing else ever goes here.
+ * The conversation screen's only chrome (spec §4.1): the partner's name + avatar
+ * on the left, a settings icon on the right. The name follows the selected voice
+ * so it matches who the user actually hears. Nothing else ever goes here.
  */
 export function MarieHeader({ onSettingsPress }: { onSettingsPress: () => void }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const name = voiceName(useAppStore((s) => s.settings.voice));
 
   return (
     <View
@@ -24,9 +28,11 @@ export function MarieHeader({ onSettingsPress }: { onSettingsPress: () => void }
       ]}>
       <View style={styles.identity}>
         <View style={[styles.avatar, { backgroundColor: colors.accent }]}>
-          <Text style={[styles.avatarLetter, { color: colors.onAccent }]}>M</Text>
+          <Text style={[styles.avatarLetter, { color: colors.onAccent }]}>
+            {name.charAt(0)}
+          </Text>
         </View>
-        <Text style={[styles.name, { color: colors.text }]}>Marie</Text>
+        <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
       </View>
 
       <Pressable

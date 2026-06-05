@@ -11,6 +11,13 @@ export interface PromptContext {
   profileSummary: string;
   gapSinceLastSession: number | null;
   history: { speaker: 'marie' | 'user'; text: string }[];
+  /** The partner's name — follows the user's selected voice (defaults to Marie). */
+  personaName: string;
+  /** Optional structured profile slots (typed counterpart to profileSummary). */
+  learnerName?: string | null;
+  interests?: string[];
+  /** Consecutive-day practice streak. Marie may acknowledge it when ≥ 3. */
+  streakDays?: number;
 }
 
 export type TurnMode = 'open' | 'reply' | 'silence';
@@ -21,33 +28,44 @@ const LEVEL_GUIDE: Record<Level, string> = {
   C: `LEVEL C (intermediate): Natural speed and phrasing. Full range of tenses. Cultural references. Challenge the user to elaborate, explain, and give opinions.`,
 };
 
-/** Build the full system prompt for one turn. */
-export function buildSystemPrompt(ctx: PromptContext, mode: TurnMode, simpler: boolean): string {
-  const sessionContext =
-    ctx.gapSinceLastSession == null
-      ? `This is the user's very first conversation with you. Greet them warmly.`
-      : `The user has spoken with you before (about ${Math.round(
-          ctx.gapSinceLastSession / 3_600_000,
-        )} hours ago). Acknowledge the gap naturally and, if it has been under 48 hours, pick up a related theme; otherwise start a fresh topic.`;
+/** Streak days that warrant a brief milestone celebration. */
+const STREAK_MILESTONES = new Set([3, 7, 14, 30, 60, 100, 200, 365]);
 
-  const profile = ctx.profileSummary.trim()
-    ? `LEARNING PROFILE (private — never mention it to the user; address these through practice, not commentary):\n${ctx.profileSummary}`
-    : `LEARNING PROFILE: empty so far — you are still getting to know this learner.`;
+export interface SystemPromptParts {
+  /**
+   * Stable across many turns — persona, level guide, correction rules, turn
+   * rules, output format. The transport sends this with `cache_control:
+   * ephemeral` so repeated turns hit the Anthropic prompt cache.
+   */
+  stable: string;
+  /**
+   * Per-turn context (LEARNER, LEARNING PROFILE, STREAK, session-resume, TASK).
+   * Prepended to the first user message instead of the system block — these
+   * change every turn and would bust the cache if they were inside it.
+   */
+  volatile: string;
+}
 
-  const modeInstruction =
-    mode === 'open'
-      ? `TASK: Open the conversation. Speak first, in French. Keep it warm, brief, and calibrated to the level. Ask exactly one easy question.`
-      : mode === 'silence'
-        ? simpler
-          ? `TASK: The user has stayed silent. Gently continue the conversation in French with a SIMPLER question than before. No correction cards this turn.`
-          : `TASK: The user has stayed silent for a moment. Offer a gentle, low-pressure nudge in French ("Tu veux dire quelque chose?"). No correction cards this turn.`
-        : `TASK: Respond to what the user just said. Continue the conversation naturally and apply the correction rules below.`;
+/**
+ * Build the two-part system prompt for one turn.
+ *
+ * The split serves the Anthropic prompt cache: the stable half is identical
+ * across consecutive turns and cacheable; the volatile half travels with the
+ * user message and is billed as fresh input every turn (small).
+ */
+export function buildSystemPrompt(
+  ctx: PromptContext,
+  mode: TurnMode,
+  simpler: boolean,
+): SystemPromptParts {
+  const name = ctx.personaName?.trim() || 'Marie';
 
-  return `You are Marie, a warm, patient French conversation partner in the Parlez app.
+  const stable = `You are ${name}, a warm, patient French conversation partner in the Parlez app.
 
 Your single purpose: get this English-speaking learner SPEAKING French. Everything you do serves that goal.
 
 PERSONA
+- Your name is ${name}. If you introduce yourself or are asked your name, say "${name}".
 - Warm, patient, encouraging, genuinely curious about the user's life.
 - Like a French friend helping someone practice — never a teacher grading them.
 - French-first, always. Switch to English ONLY inside a correction's gloss when a grammar point genuinely needs one word of explanation.
@@ -56,10 +74,6 @@ PERSONA
 
 ${LEVEL_GUIDE[ctx.level]}
 Adapt in real time: simplify without comment if the user struggles; enrich if they handle the level easily. Never tell the user their level.
-
-${profile}
-
-${sessionContext}
 
 CORRECTION RULES (spec §5.3)
 - Tier 1 (minor: accent, liaison, small mispronunciation): just use the correct form naturally in your reply. No card.
@@ -73,25 +87,110 @@ TURN RULES
 - Do not lecture. Do not explain grammar unless the user explicitly asks.
 - Keep replies conversational and concise — a few sentences at most.
 
-${modeInstruction}
-
 OUTPUT FORMAT
 Respond with ONLY a JSON object, no surrounding text, matching exactly:
 {
-  "speechText": string,        // what Marie says, in French
+  "speechText": string,        // what ${name} says, in French
+  "translation": string,       // a natural one-line English translation of speechText (for an optional tap-to-reveal helper)
   "corrections": [             // 0-2 items; [] for open/silence turns
     { "original": string, "corrected": string, "gloss": string }  // gloss optional, one short line of English
   ],
   "profileNotes": [string],    // private observations to remember (errors, gaps, confident/hesitant topics); [] if none
-  "levelSignal": "up" | "hold" | "down"   // raise if the user handles this level easily, lower if struggling
+  "levelSignal": "up" | "hold" | "down",  // raise if the user handles this level easily, lower if struggling
+  "learnerName": string | null, // OPTIONAL: when the learner reveals their name, set it; otherwise null
+  "interests": [string]        // OPTIONAL: short list (≤ 8) of newly revealed interests; [] when nothing new
+}
+
+EXAMPLE OUTPUT
+{
+  "speechText": "Super ! Et qu'est-ce que tu as fait ce matin ?",
+  "translation": "Great! And what did you do this morning?",
+  "corrections": [],
+  "profileNotes": ["Comfortable with simple past-tense exchanges."],
+  "levelSignal": "hold",
+  "learnerName": null,
+  "interests": []
+}`;
+
+  const learnerBits: string[] = [];
+  if (ctx.learnerName?.trim()) learnerBits.push(`name=${ctx.learnerName.trim()}`);
+  if (ctx.interests && ctx.interests.length > 0) {
+    learnerBits.push(`interests=${ctx.interests.join(', ')}`);
+  }
+  const learnerLine =
+    learnerBits.length > 0 ? `LEARNER: ${learnerBits.join('; ')}.` : '';
+
+  const profile = ctx.profileSummary.trim()
+    ? `LEARNING PROFILE (private — never mention it to the user; address these through practice, not commentary):\n${ctx.profileSummary}`
+    : `LEARNING PROFILE: empty so far — you are still getting to know this learner.`;
+
+  const streakDays = ctx.streakDays ?? 0;
+  let streak = '';
+  if (streakDays >= 3) {
+    const baseline = `STREAK: the learner has practised ${streakDays} days in a row — you may acknowledge this briefly in French at most once per session, only if it fits naturally.`;
+    streak = STREAK_MILESTONES.has(streakDays)
+      ? `${baseline} Today is a milestone — celebrate briefly and warmly (one short sentence).`
+      : baseline;
+  }
+
+  const sessionContext =
+    ctx.gapSinceLastSession == null
+      ? `This is the user's very first conversation with you. Greet them warmly.`
+      : `The user has spoken with you before (about ${Math.round(
+          ctx.gapSinceLastSession / 3_600_000,
+        )} hours ago). Acknowledge the gap naturally and, if it has been under 48 hours, pick up a related theme; otherwise start a fresh topic.`;
+
+  const modeInstruction =
+    mode === 'open'
+      ? `TASK: Open the conversation. Speak first, in French. Keep it warm, brief, and calibrated to the level. Ask exactly one easy question.`
+      : mode === 'silence'
+        ? simpler
+          ? `TASK: The user has stayed silent. Gently continue the conversation in French with a SIMPLER question than before. No correction cards this turn.`
+          : `TASK: The user has stayed silent for a moment. Offer a gentle, low-pressure nudge in French ("Tu veux dire quelque chose?"). No correction cards this turn.`
+        : `TASK: Respond to what the user just said. Continue the conversation naturally and apply the correction rules below.`;
+
+  const volatile = ['[CONTEXT]', learnerLine, profile, streak, sessionContext, modeInstruction]
+    .filter(Boolean)
+    .join('\n\n');
+
+  return { stable, volatile };
+}
+
+/** System prompt for the rare LLM-driven note consolidation pass. */
+export function buildConsolidationPrompt(): string {
+  return `You are a memory consolidation helper for a French-tutor app.
+
+You receive a list of free-text learning observations about one learner, each
+with an integer count of how often that observation has been logged. Some
+observations are near-duplicates phrased differently.
+
+TASK
+- Merge near-duplicates into one canonical phrasing.
+- Sum the counts of merged duplicates.
+- Drop trivial / no-signal entries.
+- Prefer specific, actionable phrasings ("confuses passé composé and imparfait
+  for habitual past actions") over vague ones ("makes past-tense errors").
+- Keep at most 40 canonical entries, ordered by combined count descending.
+
+OUTPUT
+Respond with ONLY a JSON object, no surrounding text, matching exactly:
+{
+  "canonical": [
+    { "note": string, "count": integer }
+  ]
 }`;
 }
 
-/** Assemble the Claude messages array (conversation history + this turn). */
+/**
+ * Assemble the Claude messages array. The per-turn `volatile` context block is
+ * prepended to the FIRST user message so the (cached) system prompt stays
+ * stable across turns and the volatile data does not bust the prompt cache.
+ */
 export function buildMessages(
   ctx: PromptContext,
   mode: TurnMode,
   transcript: string,
+  volatile: string,
 ): { role: 'user' | 'assistant'; content: string }[] {
   const messages: { role: 'user' | 'assistant'; content: string }[] = [];
 
@@ -102,25 +201,28 @@ export function buildMessages(
     });
   }
 
-  if (mode === 'reply') {
-    messages.push({
-      role: 'user',
-      content: transcript || '(the user spoke but nothing was transcribed)',
-    });
-  } else {
-    // open / silence: Claude still needs a user turn to respond to.
-    messages.push({
-      role: 'user',
-      content:
-        mode === 'open'
-          ? '(begin the conversation)'
-          : '(the user has been silent)',
-    });
-  }
+  const finalUserContent =
+    mode === 'reply'
+      ? transcript || '(the user spoke but nothing was transcribed)'
+      : mode === 'open'
+        ? '(begin the conversation)'
+        : '(the user has been silent)';
+
+  messages.push({ role: 'user', content: finalUserContent });
 
   // Claude requires the first message to be from the user.
   if (messages.length === 0 || messages[0].role !== 'user') {
     messages.unshift({ role: 'user', content: '(begin the conversation)' });
+  }
+
+  // Prepend volatile context to the first user message — this is where the
+  // per-turn context lives now, OUTSIDE the cached system block.
+  const v = volatile.trim();
+  if (v) {
+    messages[0] = {
+      role: 'user',
+      content: `${v}\n\n${messages[0].content}`,
+    };
   }
   return messages;
 }

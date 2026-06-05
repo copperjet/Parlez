@@ -45,3 +45,13 @@ export const MARIE_VOICES = [
   { id: 'henri', label: 'Henri', gender: 'male' },
 ] as const;
 export type MarieVoiceId = (typeof MARIE_VOICES)[number]['id'];
+
+/**
+ * The persona's display + spoken name for a given voice. The conversation
+ * partner adopts the chosen voice's name, so a male voice is never called
+ * "Marie". Single source of truth for the name shown in the header, used in
+ * accessibility labels, error banners, and the AI's system prompt.
+ */
+export function voiceName(id: MarieVoiceId): string {
+  return MARIE_VOICES.find((v) => v.id === id)?.label ?? 'Marie';
+}

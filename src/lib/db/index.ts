@@ -20,6 +20,27 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase | null> {
     dbPromise = (async () => {
       const db = await SQLite.openDatabaseAsync('parlez.db');
       await db.execAsync(SCHEMA);
+      // Migrate pre-existing message tables that lack the translation column.
+      // Harmless on fresh databases (the column already exists → ignored).
+      try {
+        await db.execAsync('ALTER TABLE messages ADD COLUMN translation TEXT');
+      } catch {
+        // Column already present.
+      }
+      try {
+        await db.execAsync(
+          'ALTER TABLE profile_notes ADD COLUMN count INTEGER NOT NULL DEFAULT 1',
+        );
+      } catch {
+        // Column already present.
+      }
+      try {
+        await db.execAsync(
+          'CREATE INDEX IF NOT EXISTS idx_profile_count ON profile_notes (count)',
+        );
+      } catch {
+        // Index already present.
+      }
       return db;
     })();
   }

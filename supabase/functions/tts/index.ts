@@ -4,9 +4,15 @@
  * the first chunk plays fast.
  *
  * Called as a GET so the mobile audio player can stream it directly:
- *   /tts?text=...&voice=marie&speed=1.0
+ *   /tts?text=...&voice=marie&speed=1.0&app_user_id=<rc anon uuid when not signed in>
+ *
+ * Phase 2 monetization: logs `text.length` chars per call into `usage_events`
+ * (non-blocking) for cost telemetry.
  */
 import { corsHeaders } from '../_shared/cors.ts';
+import { resolveCaller } from '../_shared/caller.ts';
+import { serviceClient } from '../_shared/db.ts';
+import { estimateTtsMicrocents } from '../_shared/pricing.ts';
 
 /** Map Marie's voice ids to ElevenLabs voice ids (override via env). */
 function voiceId(voice: string): string {
@@ -26,9 +32,32 @@ Deno.serve(async (req: Request) => {
     const text = url.searchParams.get('text') ?? '';
     const voice = url.searchParams.get('voice') ?? 'marie';
     const speed = Number(url.searchParams.get('speed') ?? '1.0');
+    const appUserId = url.searchParams.get('app_user_id');
 
     if (!text) {
       return new Response('missing text', { status: 400, headers: corsHeaders });
+    }
+
+    // Log TTS usage (non-blocking). Failure must not delay the audio stream.
+    const caller = resolveCaller(req, appUserId);
+    if (caller && text.length > 0) {
+      try {
+        const svc = serviceClient();
+        void svc
+          .from('usage_events')
+          .insert({
+            user_id: caller.userId,
+            is_anon: caller.isAnon,
+            kind: 'tts',
+            tts_chars: text.length,
+            estimated_cost_microcents: estimateTtsMicrocents(text.length).toString(),
+          })
+          .then(({ error }) => {
+            if (error) console.error('tts usage insert failed', error.message);
+          });
+      } catch (e) {
+        console.error('tts serviceClient unavailable', e instanceof Error ? e.message : e);
+      }
     }
 
     const key = Deno.env.get('ELEVENLABS_API_KEY');
@@ -63,7 +92,10 @@ Deno.serve(async (req: Request) => {
     );
 
     if (!eleven.ok || !eleven.body) {
-      return new Response(`elevenlabs ${eleven.status}`, {
+      // Forward ElevenLabs' own error body so the real reason (quota, missing
+      // permission, unusual-activity gate, etc.) is visible to the caller.
+      const detail = await eleven.text().catch(() => '');
+      return new Response(`elevenlabs ${eleven.status}: ${detail}`, {
         status: 502,
         headers: corsHeaders,
       });

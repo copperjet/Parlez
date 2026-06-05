@@ -14,3 +14,4 @@ export function createConversationService(): ConversationService {
 }
 
 export type { ConversationService, SynthesizedSpeech, TurnInput } from './conversation';
+export { consolidateProfile } from './consolidate';

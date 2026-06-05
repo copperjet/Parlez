@@ -26,8 +26,23 @@ import {
   stopRecognition,
   subscribeRecognition,
 } from '@/lib/audio/recognizer';
-import { addProfileNotes, buildProfileSummary } from '@/lib/db/profile';
-import { saveLevel, saveMessage, saveProfileSummary } from '@/lib/db/sessions';
+import {
+  addProfileNotes,
+  buildProfileSummary,
+  countProfileNotes,
+  getAllNotesForConsolidation,
+  replaceNotes,
+} from '@/lib/db/profile';
+import {
+  saveLevel,
+  saveMessage,
+  saveProfileSummary,
+  saveStructuredProfile,
+  saveTurnsSinceConsolidation,
+} from '@/lib/db/sessions';
+import { tickStreak } from '@/lib/streak';
+import { consolidateProfile } from '@/lib/services';
+import { DailyCapError } from '@/lib/services/supabaseService';
 import {
   GRACE_MS,
   MAX_CORRECTIONS_PER_TURN,
@@ -35,9 +50,11 @@ import {
   SILENCE_CONTINUE_MS,
   SILENCE_PROMPT_MS,
   SILENCE_STOP_MS,
+  voiceName,
 } from '@/lib/constants';
 import type { SynthesizedSpeech } from '@/lib/services';
 import { useAppStore } from '@/stores/appStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import type { TurnContext, TurnResponse } from '@/lib/types';
 
 const POLL_MS = 150;
@@ -55,6 +72,14 @@ const STT_MISS_SPEECH =
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/**
+ * Conversation-time estimate from a character count (~14 chars/sec, French).
+ * Mirrors the server's `estimateSpeechMs` so the local soft-cap counter and the
+ * server's authoritative `elapsed_ms` measure the same thing — otherwise the
+ * client would block earlier (or later) than the server actually caps.
+ */
+const estimateSpeechMs = (chars: number) => Math.max(0, Math.round((chars / 14) * 1000));
+
 export interface TurnEngine {
   /** 0..1 live mic amplitude, for the recording waveform. */
   micLevel: number;
@@ -67,6 +92,8 @@ export interface TurnEngine {
    * then drives a typed-text conversation instead of a dead listening loop.
    */
   sttUnavailable: boolean;
+  /** Re-synthesize and play a past partner message on demand (per-bubble replay). */
+  replay: (text: string) => void;
 }
 
 export function useTurnEngine(online: boolean): TurnEngine {
@@ -79,6 +106,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
   const [micLevel, setMicLevel] = useState(0);
   const onMicPressRef = useRef<() => void>(() => {});
   const submitTextRef = useRef<(text: string) => void>(() => {});
+  const replayRef = useRef<(text: string) => void>(() => {});
 
   useEffect(() => {
     let alive = true;
@@ -98,6 +126,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let silenceRound = 0;
     let latestTranscript = '';
     let recognitionUri: string | null = null;
+    /** Tick streak once per session, only after a real user reply. */
+    let streakTickedThisSession = false;
 
     const store = () => useAppStore.getState();
     const phase = () => store().turnState;
@@ -111,17 +141,87 @@ export function useTurnEngine(online: boolean): TurnEngine {
         // Prior-session transcript feeds the AI but is never shown (spec §3.2).
         history: [...s.priorHistory, ...s.messages],
         gapSinceLastSession: s.gapSinceLastSession,
+        personaName: voiceName(s.settings.voice),
+        learnerName: s.learnerName ?? null,
+        interests: s.interests,
+        streakDays: s.streakCount,
       };
     };
 
+    /** Consolidation thresholds — bounded LLM calls (~3 per 100 turns max). */
+    const CONSOLIDATION_TURN_THRESHOLD = 20;
+    const CONSOLIDATION_MIN_ROWS = 30;
+    let consolidationInFlight = false;
+
+    /** Fire-and-forget LLM merge of similar notes. Never blocks the turn. */
+    const maybeConsolidate = () => {
+      if (consolidationInFlight) return;
+      if (store().turnsSinceConsolidation < CONSOLIDATION_TURN_THRESHOLD) return;
+      consolidationInFlight = true;
+      void (async () => {
+        try {
+          const rows = await countProfileNotes();
+          if (rows < CONSOLIDATION_MIN_ROWS) return;
+          const notes = await getAllNotesForConsolidation();
+          const canonical = await consolidateProfile(
+            notes,
+            store().profileSummary,
+          );
+          // null = transport failure → keep the counter so we retry naturally.
+          // Empty array = the LLM legitimately considers nothing worth keeping
+          // (or trivial); that's a successful call and we reset to avoid an
+          // every-turn re-trigger loop.
+          if (!alive || canonical == null) return;
+          if (canonical.length > 0) {
+            await replaceNotes(canonical);
+            const summary = await buildProfileSummary();
+            if (!alive) return;
+            store().setProfileSummary(summary);
+            void saveProfileSummary(summary);
+          }
+          store().setTurnsSinceConsolidation(0);
+          void saveTurnsSinceConsolidation(0);
+        } catch {
+          // Best-effort — counter stays, retries naturally next eligible turn.
+        } finally {
+          consolidationInFlight = false;
+        }
+      })();
+    };
+
     /** Merge this turn's AI observations into the learning profile (spec §5.4). */
-    const persistProfile = async (notes: string[]) => {
+    const persistProfile = async (
+      notes: string[],
+      learnerName: string | null | undefined,
+      interests: string[] | undefined,
+    ) => {
+      const s = store();
+      if (learnerName !== undefined) {
+        const next = learnerName ? learnerName.trim() : null;
+        if (next !== s.learnerName) {
+          s.setStructuredProfile({ learnerName: next });
+          void saveStructuredProfile({ learnerName: next });
+        }
+      }
+      if (interests && interests.length > 0) {
+        const merged = Array.from(
+          new Set([...s.interests, ...interests.map((x) => x.trim()).filter(Boolean)]),
+        ).slice(0, 8);
+        if (merged.length !== s.interests.length) {
+          s.setStructuredProfile({ interests: merged });
+          void saveStructuredProfile({ interests: merged });
+        }
+      }
       if (notes.length === 0) return;
       await addProfileNotes(notes);
       const summary = await buildProfileSummary();
       if (!alive) return;
       store().setProfileSummary(summary);
       void saveProfileSummary(summary);
+      const next = store().turnsSinceConsolidation + 1;
+      store().setTurnsSinceConsolidation(next);
+      void saveTurnsSinceConsolidation(next);
+      maybeConsolidate();
     };
 
     const haptic = (style: 'light' | 'medium') => {
@@ -174,12 +274,17 @@ export function useTurnEngine(online: boolean): TurnEngine {
       const marieMsg = s.addMessage({
         speaker: 'marie',
         text: response.speechText,
+        translation: response.translation,
         corrections: response.corrections.slice(0, MAX_CORRECTIONS_PER_TURN),
       });
       s.applyLevelSignal(response.levelSignal);
       void saveMessage(marieMsg);
       void saveLevel(store().level);
-      void persistProfile(response.profileNotes);
+      void persistProfile(
+        response.profileNotes,
+        response.learnerName,
+        response.interests,
+      );
 
       s.setTurnState('marie_speaking');
       await player.play(speech, store().settings.speechSpeed);
@@ -219,24 +324,60 @@ export function useTurnEngine(online: boolean): TurnEngine {
       store().setErrorNotice(null);
       store().setTurnState('processing');
 
+      // Phase 2 monetization — soft cap (client side, UX). The server is the
+      // source of truth (402 → DailyCapError below); this pre-empts the round-
+      // trip when we already know we're over.
+      const sub = useSubscriptionStore.getState();
+      sub.resetDailyIfNewDay();
+      const subNow = useSubscriptionStore.getState();
+      if (
+        subNow.tier &&
+        subNow.tier !== 'lifetime' &&
+        subNow.tierCapSeconds != null &&
+        subNow.usageTodaySeconds >= subNow.tierCapSeconds
+      ) {
+        subNow.setCapBlocked({
+          tier: subNow.tier,
+          capSeconds: subNow.tierCapSeconds,
+        });
+        store().setTurnState('idle');
+        return;
+      }
+
       // One automatic retry after 3s on failure (spec §10.2).
       let response: TurnResponse | null = null;
-      for (let attempt = 0; attempt < 2 && response == null; attempt += 1) {
+      let capHit = false;
+      for (let attempt = 0; attempt < 2 && response == null && !capHit; attempt += 1) {
         try {
           response = await store().service.sendTurn(
             { audioUri: input.audioUri ?? null, text: input.text ?? null },
             buildContext(),
           );
-        } catch {
+        } catch (e) {
+          if (e instanceof DailyCapError) {
+            // Server overruled — never retry, never apologise.
+            capHit = true;
+            break;
+          }
           if (attempt === 0) await wait(3000);
         }
         if (!alive) return;
       }
 
+      if (capHit) {
+        store().setTurnState('idle');
+        return;
+      }
+
       if (response == null) {
         // AI / network failure — Marie apologises in French, then we listen again.
+        // Only blame the connection when we're genuinely offline; otherwise the
+        // server (STT/AI/TTS provider) failed and a "check your connection"
+        // message is misleading.
         store().setErrorNotice(
-          'Something went wrong. Check your connection and try again.',
+          onlineRef.current
+            ? `${voiceName(store().settings.voice)} couldn’t respond just now. Please try again in a moment.`
+            : 'You’re offline — reconnect and try again.',
         );
         await speak({
           transcript: '',
@@ -267,8 +408,21 @@ export function useTurnEngine(online: boolean): TurnEngine {
           text: response.transcript,
         });
         void saveMessage(userMsg);
+        // First real user reply this session — tick the streak (calendar-day,
+        // local). Fire-and-forget, never blocks the conversation.
+        if (!streakTickedThisSession) {
+          streakTickedThisSession = true;
+          void tickStreak();
+        }
       }
       await speak(response);
+      // Attribute conversation time to the local rolling-day counter using the
+      // same char-based estimate the server uses for elapsed_ms, so the soft cap
+      // pre-empts at the same point the server would hard-cap (no early/late skew).
+      const convoMs =
+        estimateSpeechMs(response.transcript.length) +
+        estimateSpeechMs(response.speechText.length);
+      useSubscriptionStore.getState().recordTurnElapsed(convoMs);
     };
 
     /** Funnel for the end of a user turn — fired by the recognizer's `end` event. */
@@ -290,9 +444,15 @@ export function useTurnEngine(online: boolean): TurnEngine {
       }
 
       const isOnline = onlineRef.current;
+      // Send the recorded audio to cloud Whisper as the PRIMARY transcript when
+      // online — it's markedly more accurate than the device recognizer. We also
+      // send the device transcript as `text`: the server prefers Whisper but
+      // falls back to this when Whisper errors or the recording is unusable
+      // (notably Android's system recognizer, which yields an empty file). Offline,
+      // there's no Whisper, so the device transcript is all we have.
       await runUserTurn({
         audioUri: isOnline ? uri : null,
-        text: isOnline ? null : text || null,
+        text: text || null,
       });
     };
 
@@ -391,6 +551,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
         return;
       }
       if (!alive) return;
+      // Streak is intentionally NOT ticked here — opening the app doesn't
+      // count as practice. It ticks on the first real user reply (runUserTurn).
       await speak(response);
     };
 
@@ -433,6 +595,28 @@ export function useTurnEngine(online: boolean): TurnEngine {
     };
     submitTextRef.current = (text: string) => void submitText(text);
 
+    /** Re-hear a past partner message. Only when not mid-turn, so it never
+     * fights the live conversation's audio. */
+    replayRef.current = (text: string) => {
+      const trimmed = text.trim();
+      // Replay only when idle/grace — never mid-turn, so it can't clobber the
+      // partner's live speech or the user's recording.
+      if (!trimmed || (phase() !== 'idle' && phase() !== 'grace')) {
+        return;
+      }
+      void (async () => {
+        const s = store();
+        let speech: SynthesizedSpeech;
+        try {
+          speech = await s.service.synthesize(trimmed, s.settings.voice, s.settings.speechSpeed);
+        } catch {
+          return;
+        }
+        if (!alive) return;
+        await player.play(speech, store().settings.speechSpeed);
+      })();
+    };
+
     void start();
 
     return () => {
@@ -452,5 +636,6 @@ export function useTurnEngine(online: boolean): TurnEngine {
     onMicPress: () => onMicPressRef.current(),
     submitText: (text: string) => submitTextRef.current(text),
     sttUnavailable: !isRecognitionAvailable(),
+    replay: (text: string) => replayRef.current(text),
   };
 }

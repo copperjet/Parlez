@@ -3,12 +3,16 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { loadPersistedState } from '@/lib/db/sessions';
+import { initRevenueCat } from '@/lib/revenuecat';
+import { pushState } from '@/lib/sync';
 import { useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -30,11 +34,31 @@ export default function RootLayout() {
       } catch {
         // Fall through to defaults.
       } finally {
+        // Subscription bootstrap: configure RC, hydrate cached entitlement
+        // before routing, then kick a background refresh.
+        try {
+          await initRevenueCat();
+          await useSubscriptionStore.getState().hydrateFromCache();
+          await useSubscriptionStore.getState().hydrateUsageFromCache();
+          void useSubscriptionStore.getState().refresh();
+        } catch {
+          // Never block launch on billing.
+        }
         setHydrated(true);
         SplashScreen.hideAsync().catch(() => {});
       }
     })();
   }, [hydrate]);
+
+  // Cross-device sync is opt-in and bidirectional: pull/seed at sign-in, and
+  // push the learning profile up whenever the app backgrounds. pushState() is a
+  // no-op for signed-out users, so this is safe to always register.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background' || next === 'inactive') void pushState();
+    });
+    return () => sub.remove();
+  }, []);
 
   if (!hydrated) return null;
 
@@ -64,8 +88,16 @@ export default function RootLayout() {
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <Stack.Screen
+              name="progress"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
               name="privacy"
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
+              name="paywall"
+              options={{ presentation: 'modal', animation: 'fade', gestureEnabled: false }}
             />
           </Stack>
         </ThemeProvider>

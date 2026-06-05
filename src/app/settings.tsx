@@ -1,14 +1,27 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { MARIE_VOICES, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
+import { MARIE_VOICES, voiceName, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
 import { clearProfile } from '@/lib/db/profile';
-import { clearMessages, saveProfileSummary, saveSettings } from '@/lib/db/sessions';
+import {
+  clearMessages,
+  clearStructuredProfile,
+  saveProfileSummary,
+  saveSettings,
+  saveTurnsSinceConsolidation,
+} from '@/lib/db/sessions';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import type { Settings as AppSettings } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
+
+const PLAY_SUB_URL =
+  'https://play.google.com/store/account/subscriptions?package=com.denny32.parlez';
+const IOS_SUB_URL = 'https://apps.apple.com/account/subscriptions';
+const SUB_URL = Platform.OS === 'ios' ? IOS_SUB_URL : PLAY_SUB_URL;
 
 const SPEEDS: { id: SpeechSpeed; label: string }[] = [
   { id: 'slow', label: 'Slow' },
@@ -79,6 +92,26 @@ export default function Settings() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const resetMemory = useAppStore((s) => s.resetMemory);
+  const streakCount = useAppStore((s) => s.streakCount);
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const isTrialing = useSubscriptionStore((s) => s.isTrialing);
+  const restore = useSubscriptionStore((s) => s.restore);
+
+  const onManageSub = () => {
+    void WebBrowser.openBrowserAsync(SUB_URL);
+  };
+  const onRestore = async () => {
+    const ok = await restore();
+    Alert.alert(
+      ok ? 'Subscription restored' : 'No purchases found',
+      ok
+        ? 'Welcome back.'
+        : `We couldn't find an active subscription on this ${Platform.OS === 'ios' ? 'Apple' : 'Google'} account.`,
+    );
+  };
+  const onUpgrade = () => {
+    router.push('/paywall' as never);
+  };
 
   const change = (patch: Partial<AppSettings>) => {
     updateSettings(patch);
@@ -88,7 +121,7 @@ export default function Settings() {
   const confirmClear = () => {
     Alert.alert(
       'Clear session history?',
-      'Marie will forget your past conversations and start fresh. This cannot be undone.',
+      `${voiceName(settings.voice)} will forget your past conversations and start fresh. This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -98,7 +131,9 @@ export default function Settings() {
             resetMemory();
             void clearMessages();
             void clearProfile();
+            void clearStructuredProfile();
             void saveProfileSummary('');
+            void saveTurnsSinceConsolidation(0);
             router.back();
           },
         },
@@ -120,6 +155,12 @@ export default function Settings() {
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>
+        <Row label="Streak">
+          <Text style={[styles.streakValue, { color: colors.text }]}>
+            {streakCount > 0 ? `Day ${streakCount}` : '—'}
+          </Text>
+        </Row>
+
         <Row label="Speech speed">
           <Segmented
             options={SPEEDS}
@@ -128,7 +169,7 @@ export default function Settings() {
           />
         </Row>
 
-        <Row label="Marie’s voice">
+        <Row label="Voice">
           <Segmented
             options={MARIE_VOICES.map((v) => ({ id: v.id, label: v.label }))}
             value={settings.voice}
@@ -153,6 +194,19 @@ export default function Settings() {
         </Row>
 
         <Pressable
+          onPress={() => router.push('/progress' as never)}
+          accessibilityRole="button"
+          style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Your progress</Text>
+          <View style={styles.linkRight}>
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.caption }}>
+              Corrections & patterns
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          </View>
+        </Pressable>
+
+        <Pressable
           onPress={() => router.push('/account')}
           accessibilityRole="button"
           style={[styles.linkRow, { borderBottomColor: colors.border }]}>
@@ -171,6 +225,37 @@ export default function Settings() {
           style={[styles.linkRow, { borderBottomColor: colors.border }]}>
           <Text style={[styles.rowLabel, { color: colors.text }]}>Privacy</Text>
           <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
+
+        {isPremium || isTrialing ? (
+          <Pressable
+            onPress={onManageSub}
+            accessibilityRole="button"
+            style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Manage subscription</Text>
+            <View style={styles.linkRight}>
+              <Text style={{ color: colors.textSecondary, fontSize: FontSize.caption }}>
+                {isTrialing ? 'Free trial' : 'Active'}
+              </Text>
+              <Ionicons name="open-outline" size={18} color={colors.textFaint} />
+            </View>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={onUpgrade}
+            accessibilityRole="button"
+            style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.rowLabel, { color: colors.accent }]}>Upgrade to Parlez Premium</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.accent} />
+          </Pressable>
+        )}
+
+        <Pressable
+          onPress={onRestore}
+          accessibilityRole="button"
+          style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Restore purchases</Text>
+          <Ionicons name="refresh" size={18} color={colors.textFaint} />
         </Pressable>
 
         <Pressable
@@ -227,4 +312,5 @@ const styles = StyleSheet.create({
   linkRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   clearRow: { paddingVertical: Spacing.xl, alignItems: 'center' },
   clearText: { fontSize: FontSize.body, fontWeight: '600' },
+  streakValue: { fontSize: FontSize.body, fontWeight: '600' },
 });

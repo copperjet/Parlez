@@ -32,6 +32,8 @@ export interface Message {
   text: string;
   /** Correction cards, only ever attached to a Marie message. */
   corrections?: Correction[];
+  /** Optional one-line English translation of a partner message (tap to reveal). */
+  translation?: string;
   /** True while a user message is still being transcribed (faint rendering). */
   pending?: boolean;
   createdAt: number;
@@ -49,6 +51,14 @@ export interface TurnContext {
   history: Message[];
   /** ms since the previous session ended, or null on the very first turn. */
   gapSinceLastSession: number | null;
+  /** The partner's name for this session — follows the selected voice. */
+  personaName: string;
+  /** The learner's name, if known — emitted by the AI over time. */
+  learnerName?: string | null;
+  /** Topics the learner cares about, accreted from past turns. */
+  interests?: string[];
+  /** Consecutive-day practice streak. Marie may acknowledge it ≥ 3. */
+  streakDays?: number;
 }
 
 /** Structured result of one conversational turn (spec §7.5). */
@@ -57,12 +67,18 @@ export interface TurnResponse {
   transcript: string;
   /** What Marie says back. */
   speechText: string;
+  /** Optional one-line English translation of speechText (tap to reveal). */
+  translation?: string;
   /** Correction cards for this turn (already capped to the spec limit). */
   corrections: Correction[];
   /** Internal observations to merge into the learning profile. */
   profileNotes: string[];
   /** Whether to raise, hold, or lower complexity. */
   levelSignal: LevelSignal;
+  /** Optional learner-name update emitted by the AI when it learns the name. */
+  learnerName?: string | null;
+  /** Optional updated interest list — Marie keeps the typed profile current. */
+  interests?: string[];
 }
 
 /** Phases of one conversational turn (spec §3.3, §6.3). */

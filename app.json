@@ -8,7 +8,8 @@
     "scheme": "parlez",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.denny32.parlez",
+      "icon": "./assets/images/icon.png",
       "supportsTablet": false,
       "infoPlist": {
         "UIBackgroundModes": [
@@ -16,10 +17,14 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Parlez uses speech recognition so Marie can understand your French when you are offline.",
         "NSMicrophoneUsageDescription": "Parlez listens to your voice so Marie can speak with you."
+      },
+      "entitlements": {
+        "com.apple.developer.applesignin": ["Default"]
       }
     },
     "android": {
       "package": "com.denny32.parlez",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -81,7 +86,9 @@
         }
       ],
       "expo-asset",
-      "expo-image"
+      "expo-image",
+      "expo-apple-authentication",
+      "./scripts/withPrivacyManifest"
     ],
     "experiments": {
       "typedRoutes": true,

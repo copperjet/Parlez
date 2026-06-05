@@ -1,12 +1,26 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { clearProfile } from '@/lib/db/profile';
-import { clearMessages, saveProfileSummary } from '@/lib/db/sessions';
+import {
+  clearActivity,
+  clearMessages,
+  clearStreak,
+  clearStructuredProfile,
+  saveProfileSummary,
+} from '@/lib/db/sessions';
+import { ENV } from '@/lib/env';
 import { FontSize, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
+
+function deleteAccountUrl(): string {
+  const base = ENV.supabaseUrl.replace(/\/$/, '');
+  return base ? `${base}/functions/v1/delete-account` : 'https://parlez.app/delete-account';
+}
 
 const PRINCIPLES = [
   'Your voice audio is never stored. It is transcribed, then immediately discarded.',
@@ -22,22 +36,26 @@ export default function Privacy() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const resetMemory = useAppStore((s) => s.resetMemory);
+  const resetAll = useAppStore((s) => s.resetAll);
 
   const confirmDelete = () => {
     Alert.alert(
       'Delete all my data?',
-      'This permanently removes your conversations and everything Marie has learned about you. This cannot be undone.',
+      'This permanently removes your conversations, your streak, and everything Marie has learned about you. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete everything',
           style: 'destructive',
           onPress: () => {
-            resetMemory();
+            resetAll();
             void clearMessages();
             void clearProfile();
+            void clearStructuredProfile();
+            void clearStreak();
+            void clearActivity();
             void saveProfileSummary('');
+            void useSubscriptionStore.getState().logOutAndReset();
             router.back();
           },
         },
@@ -84,6 +102,15 @@ export default function Privacy() {
             Delete all my data
           </Text>
         </Pressable>
+
+        <Pressable
+          onPress={() => void WebBrowser.openBrowserAsync(deleteAccountUrl())}
+          accessibilityRole="button"
+          style={styles.webDeleteRow}>
+          <Text style={[styles.webDeleteText, { color: colors.textSecondary }]}>
+            Also delete my account & subscription on the web
+          </Text>
+        </Pressable>
       </ScrollView>
     </View>
   );
@@ -106,4 +133,6 @@ const styles = StyleSheet.create({
   principleText: { flex: 1, fontSize: FontSize.body, lineHeight: FontSize.body * 1.45 },
   deleteRow: { paddingVertical: Spacing.xl, alignItems: 'center' },
   deleteText: { fontSize: FontSize.body, fontWeight: '600' },
+  webDeleteRow: { paddingBottom: Spacing.lg, alignItems: 'center' },
+  webDeleteText: { fontSize: FontSize.caption, textDecorationLine: 'underline' },
 });

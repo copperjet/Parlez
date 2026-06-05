@@ -32,7 +32,7 @@ export function CorrectionCard({ correction }: { correction: Correction }) {
           </Text>
         </View>
         {correction.gloss ? (
-          <Text style={[styles.gloss, { color: colors.textSecondary }]} numberOfLines={1}>
+          <Text style={[styles.gloss, { color: colors.textSecondary }]}>
             {correction.gloss}
           </Text>
         ) : null}

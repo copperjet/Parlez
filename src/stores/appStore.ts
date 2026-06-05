@@ -60,6 +60,17 @@ interface AppStore {
   /** Compact learning-profile summary fed to the system prompt (spec §5.4). */
   profileSummary: string;
 
+  /** Typed profile slots — what Marie has learned by category, not by sentence. */
+  learnerName: string | null;
+  interests: string[];
+
+  /** Calendar-day streak — surfaced in settings only. NOT cleared on memory reset. */
+  streakCount: number;
+  lastSessionDate: string | null;
+
+  /** Counter that gates the next LLM consolidation pass. */
+  turnsSinceConsolidation: number;
+
   /** ms since the user was last active — drives Marie's session-resume (spec §3.2). */
   gapSinceLastSession: number | null;
 
@@ -78,6 +89,11 @@ interface AppStore {
     profileSummary: string;
     gapSinceLastSession: number | null;
     priorHistory: Message[];
+    learnerName: string | null;
+    interests: string[];
+    streakCount: number;
+    lastSessionDate: string | null;
+    turnsSinceConsolidation: number;
   }) => void;
   completeOnboarding: (choice: OnboardingChoice) => void;
   setTurnState: (s: TurnState) => void;
@@ -85,6 +101,7 @@ interface AppStore {
     speaker: Message['speaker'];
     text: string;
     corrections?: Message['corrections'];
+    translation?: Message['translation'];
     pending?: boolean;
   }) => Message;
   updateMessage: (id: string, patch: Partial<Message>) => void;
@@ -92,9 +109,17 @@ interface AppStore {
   setErrorNotice: (notice: string | null) => void;
   applyLevelSignal: (signal: LevelSignal) => void;
   setProfileSummary: (summary: string) => void;
+  setStructuredProfile: (input: {
+    learnerName?: string | null;
+    interests?: string[];
+  }) => void;
+  setStreak: (count: number, date: string | null) => void;
+  setTurnsSinceConsolidation: (count: number) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   /** "Clear session history" — resets Marie's memory of the user (spec §4.5). */
   resetMemory: () => void;
+  /** "Delete all my data" — same as resetMemory, plus wipes streak. */
+  resetAll: () => void;
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -108,6 +133,11 @@ export const useAppStore = create<AppStore>((set) => ({
   liveTranscript: '',
   errorNotice: null,
   profileSummary: '',
+  learnerName: null,
+  interests: [],
+  streakCount: 0,
+  lastSessionDate: null,
+  turnsSinceConsolidation: 0,
   gapSinceLastSession: null,
   sessionEpoch: 0,
   service: createConversationService(),
@@ -121,6 +151,11 @@ export const useAppStore = create<AppStore>((set) => ({
       profileSummary: state.profileSummary,
       gapSinceLastSession: state.gapSinceLastSession,
       priorHistory: state.priorHistory,
+      learnerName: state.learnerName,
+      interests: state.interests,
+      streakCount: state.streakCount,
+      lastSessionDate: state.lastSessionDate,
+      turnsSinceConsolidation: state.turnsSinceConsolidation,
     }),
 
   completeOnboarding: (choice) =>
@@ -138,6 +173,7 @@ export const useAppStore = create<AppStore>((set) => ({
       speaker: input.speaker,
       text: input.text,
       corrections: input.corrections,
+      translation: input.translation,
       pending: input.pending,
       createdAt: Date.now(),
     };
@@ -159,14 +195,57 @@ export const useAppStore = create<AppStore>((set) => ({
 
   setProfileSummary: (profileSummary) => set({ profileSummary }),
 
+  setStructuredProfile: ({ learnerName, interests }) =>
+    set((s) => ({
+      learnerName: learnerName === undefined ? s.learnerName : learnerName,
+      interests: interests === undefined ? s.interests : interests,
+    })),
+
+  setStreak: (streakCount, lastSessionDate) =>
+    set({ streakCount, lastSessionDate }),
+
+  setTurnsSinceConsolidation: (turnsSinceConsolidation) =>
+    set({ turnsSinceConsolidation }),
+
   updateSettings: (patch) =>
     set((s) => ({ settings: { ...s.settings, ...patch } })),
 
+  /**
+   * Clears memory but DELIBERATELY preserves streakCount + lastSessionDate —
+   * the streak is engagement state, not a memory of the user.
+   */
   resetMemory: () =>
     set((s) => ({
       messages: [],
       priorHistory: [],
       profileSummary: '',
+      learnerName: null,
+      interests: [],
+      turnsSinceConsolidation: 0,
+      gapSinceLastSession: null,
+      liveTranscript: '',
+      errorNotice: null,
+      turnState: 'idle',
+      service: createConversationService(),
+      sessionEpoch: s.sessionEpoch + 1,
+    })),
+
+  /**
+   * Wipe everything — used by "Delete all my data". Resets streak AND Marie's
+   * internal level estimate (the user asked to delete everything Marie has
+   * learned, which includes their estimated proficiency).
+   */
+  resetAll: () =>
+    set((s) => ({
+      level: 'B',
+      messages: [],
+      priorHistory: [],
+      profileSummary: '',
+      learnerName: null,
+      interests: [],
+      streakCount: 0,
+      lastSessionDate: null,
+      turnsSinceConsolidation: 0,
       gapSinceLastSession: null,
       liveTranscript: '',
       errorNotice: null,

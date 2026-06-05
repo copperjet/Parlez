@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS messages (
   speaker     TEXT NOT NULL,
   text        TEXT NOT NULL,
   corrections TEXT,
+  translation TEXT,
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages (created_at);
@@ -27,7 +28,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_created ON messages (created_at);
 CREATE TABLE IF NOT EXISTS profile_notes (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   note       TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  count      INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_profile_created ON profile_notes (created_at);
+CREATE INDEX IF NOT EXISTS idx_profile_count ON profile_notes (count);
 `;
