@@ -117,15 +117,13 @@ Deno.serve(async (req: Request) => {
 
     const status = statusFor(eventType, periodType);
 
-    // RC's app_user_id is either a Supabase UUID (signed-in) or our anon UUID.
-    // Both formats fit the same UUID regex; we only know which by the original
-    // alias chain. Persist supabase_user_id only when it matches the format
-    // AND we have other signals; for simplicity, mirror it into both fields and
-    // let the cap-check resolver use is_anon. The `aliases` array tells us.
-    const aliases = Array.isArray(event.aliases) ? (event.aliases as string[]) : [];
-    const supabaseUserId =
-      aliases.find((a) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(a)) ??
-      appUserId;
+    // The entitlement resolver keys solely on `app_user_id` (after RC logIn a
+    // signed-in user's appUserID == their Supabase uuid), so this column is for
+    // analytics only — never for resolution. We can't reliably tell an anon uuid
+    // from a Supabase uuid by shape, so leave it null and let downstream joins
+    // populate it. (Previously this guessed from `aliases`, which mislabelled
+    // anonymous rows.)
+    const supabaseUserId = null;
 
     const svc = serviceClient();
     const { error } = await svc.from('subscriptions').upsert(

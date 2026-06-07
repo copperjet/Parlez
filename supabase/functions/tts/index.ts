@@ -12,6 +12,7 @@
 import { corsHeaders } from '../_shared/cors.ts';
 import { resolveCaller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
+import { loadEntitlement } from '../_shared/caps.ts';
 import { estimateTtsMicrocents } from '../_shared/pricing.ts';
 
 /** Map Marie's voice ids to ElevenLabs voice ids (override via env). */
@@ -38,8 +39,23 @@ Deno.serve(async (req: Request) => {
       return new Response('missing text', { status: 400, headers: corsHeaders });
     }
 
-    // Log TTS usage (non-blocking). Failure must not delay the audio stream.
+    // Entitlement gate — same source of truth as `turn`. Deny unidentified or
+    // non-entitled callers before spending an ElevenLabs synthesis. Fail open
+    // only on a genuine infra error so paying users aren't blocked.
     const caller = resolveCaller(req, appUserId);
+    if (!caller) {
+      return new Response('not_entitled', { status: 403, headers: corsHeaders });
+    }
+    try {
+      const { entitled } = await loadEntitlement(serviceClient(), caller.userId);
+      if (!entitled) {
+        return new Response('not_entitled', { status: 403, headers: corsHeaders });
+      }
+    } catch (e) {
+      console.error('tts entitlement check failed', e instanceof Error ? e.message : e);
+    }
+
+    // Log TTS usage (non-blocking). Failure must not delay the audio stream.
     if (caller && text.length > 0) {
       try {
         const svc = serviceClient();

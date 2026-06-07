@@ -88,6 +88,33 @@ async function deleteUserStateRow(
   }
 }
 
+/**
+ * Purge the monetization/telemetry footprint for an id (Play Data-Safety
+ * "delete account"): usage rows (keyed by user_id) and the subscription mirror
+ * row (keyed by app_user_id). RevenueCat-side data is wiped separately via the
+ * DELETE subscriber call.
+ */
+async function deleteUsageAndSubscription(
+  client: ReturnType<typeof createClient>,
+  id: string,
+): Promise<void> {
+  try {
+    await client.from('usage_events').delete().eq('user_id', id);
+  } catch {
+    // best-effort
+  }
+  try {
+    await client.from('subscriptions').delete().eq('app_user_id', id);
+  } catch {
+    // best-effort
+  }
+  try {
+    await client.from('subscriptions').delete().eq('supabase_user_id', id);
+  } catch {
+    // best-effort
+  }
+}
+
 async function lookupUserIdByEmail(
   client: ReturnType<typeof createClient>,
   email: string,
@@ -171,6 +198,7 @@ Deno.serve(async (req: Request) => {
     Array.from(ids).flatMap((id) => [
       deleteFromRevenueCat(id, rcSecret),
       deleteUserStateRow(admin, id),
+      deleteUsageAndSubscription(admin, id),
     ]),
   );
 

@@ -34,8 +34,12 @@ create table public.usage_events (
   estimated_cost_microcents bigint
 );
 
-create index usage_events_user_day on public.usage_events
-  (user_id, (occurred_at::date));
+-- Index the per-user UTC-day rollup the cap query/view actually use. The cast
+-- must be IMMUTABLE for an index expression: `occurred_at::date` depends on the
+-- session timezone (STABLE, rejected), so pin the zone with `at time zone 'utc'`
+-- before casting. Same expression 0003 references via create-if-not-exists.
+create index usage_events_user_utcday on public.usage_events
+  (user_id, ((occurred_at at time zone 'utc')::date));
 
 -- Daily roll-up. The `turn` edge function reads this to enforce the cap.
 create view public.usage_daily as

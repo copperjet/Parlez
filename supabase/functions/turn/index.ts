@@ -22,7 +22,7 @@ import {
 } from '../_shared/prompt.ts';
 import { resolveCaller, type Caller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
-import { loadTier, loadTodayElapsedMs, tierCapSeconds } from '../_shared/caps.ts';
+import { loadEntitlement, loadTodayElapsedMs, tierCapSeconds } from '../_shared/caps.ts';
 import {
   estimateClaudeMicrocents,
   estimateWhisperMicrocents,
@@ -393,31 +393,38 @@ Deno.serve(async (req: Request) => {
       return json(mockTurn(mode, ctx.personaName));
     }
 
-    // Resolve caller + enforce the daily cap before doing any paid work.
+    // Resolve caller + enforce entitlement and the daily cap before any paid
+    // work. An unidentified caller (no JWT, no app_user_id) is denied outright —
+    // every legitimate client sends its RevenueCat appUserID.
     const caller: Caller | null = resolveCaller(req, bodyAppUserId);
-    if (caller) {
-      try {
-        const svc = serviceClient();
-        const tier = await loadTier(svc, caller.userId, caller.isAnon);
-        const cap = tierCapSeconds(tier);
-        if (cap !== null) {
-          const usedMs = await loadTodayElapsedMs(svc, caller.userId);
-          if (usedMs >= cap * 1000) {
-            return json(
-              {
-                reason: 'daily_cap',
-                tier,
-                cap_seconds: cap,
-                used_seconds: Math.round(usedMs / 1000),
-              },
-              402,
-            );
-          }
-        }
-      } catch (e) {
-        // Cap check must not block conversation on infra failure.
-        console.error('cap check failed', e instanceof Error ? e.message : e);
+    if (!caller) {
+      return json({ reason: 'not_entitled' }, 403);
+    }
+    try {
+      const svc = serviceClient();
+      const { tier, entitled } = await loadEntitlement(svc, caller.userId);
+      if (!entitled) {
+        return json({ reason: 'not_entitled' }, 403);
       }
+      const cap = tierCapSeconds(tier);
+      if (cap !== null) {
+        const usedMs = await loadTodayElapsedMs(svc, caller.userId);
+        if (usedMs >= cap * 1000) {
+          return json(
+            {
+              reason: 'daily_cap',
+              tier,
+              cap_seconds: cap,
+              used_seconds: Math.round(usedMs / 1000),
+            },
+            402,
+          );
+        }
+      }
+    } catch (e) {
+      // A genuine infra failure (DB/RC unreachable) must not block paying users;
+      // fail open. A clean "not entitled" already returned 403 above.
+      console.error('entitlement/cap check failed', e instanceof Error ? e.message : e);
     }
 
     let transcript = text ?? '';

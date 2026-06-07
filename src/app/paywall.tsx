@@ -29,8 +29,8 @@ import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 type TierId = 'monthly' | 'annual' | 'lifetime';
 
-const TERMS_URL = 'https://parlez.app/terms';
-const PRIVACY_URL = 'https://parlez.app/privacy';
+const TERMS_URL = 'https://codarti.com/parlez/terms';
+const PRIVACY_URL = 'https://codarti.com/parlez/privacy';
 
 function classify(pkg: PurchasesPackage): TierId | null {
   const type = pkg.packageType;
@@ -40,6 +40,20 @@ function classify(pkg: PurchasesPackage): TierId | null {
   const prodId = pkg.product.identifier.toLowerCase();
   if (id.includes('lifetime') || prodId.includes('lifetime')) return 'lifetime';
   return null;
+}
+
+/**
+ * Read the real free-trial phase off the product so the copy always matches the
+ * configured Play offer (avoids "misrepresentation" rejections). A free trial is
+ * an intro price of 0; its length comes from the product, never hardcoded.
+ * Returns null when the product has no free trial.
+ */
+function freeTrial(pkg: PurchasesPackage | null): { length: string; phrase: string } | null {
+  const intro = pkg?.product.introPrice;
+  if (!intro || intro.price > 0 || !intro.periodNumberOfUnits) return null;
+  const n = intro.periodNumberOfUnits;
+  const unit = (intro.periodUnit ?? 'DAY').toLowerCase();
+  return { length: `${n}-${unit}`, phrase: n === 1 ? `1 ${unit}` : `${n} ${unit}s` };
 }
 
 export default function Paywall() {
@@ -94,7 +108,7 @@ export default function Paywall() {
   }, []);
 
   const selectedPkg = tiers[selected] ?? null;
-  const hasTrial = selected === 'monthly' || selected === 'annual';
+  const trial = freeTrial(selectedPkg);
 
   const onBuy = async () => {
     if (!selectedPkg) return;
@@ -169,7 +183,7 @@ export default function Paywall() {
               tier="monthly"
               pkg={tiers.monthly}
               label="Monthly"
-              caption="Try the full app for a week, free"
+              caption="Start with a free trial"
               selected={selected === 'monthly'}
               onPress={() => setSelected('monthly')}
             />
@@ -206,14 +220,14 @@ export default function Paywall() {
             <ActivityIndicator color={colors.onAccent} />
           ) : (
             <Text style={[styles.ctaText, { color: colors.onAccent }]}>
-              {hasTrial ? 'Start 7-day free trial' : 'Buy lifetime — one payment'}
+              {trial ? `Start ${trial.length} free trial` : 'Buy lifetime — one payment'}
             </Text>
           )}
         </Pressable>
 
         <Text style={[styles.fine, { color: colors.textFaint }]}>
-          {hasTrial
-            ? `7 days free, then ${selectedPkg?.product.priceString ?? ''}${
+          {trial
+            ? `${trial.phrase} free, then ${selectedPkg?.product.priceString ?? ''}${
                 selected === 'annual' ? ' billed yearly' : ' billed monthly'
               }. Cancel anytime in Google Play.`
             : 'One-time payment. No subscription, no renewal.'}

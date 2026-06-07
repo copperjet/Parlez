@@ -29,6 +29,19 @@ export class DailyCapError extends Error {
 }
 
 /**
+ * Sentinel thrown when the server rejects the caller as not entitled (403). The
+ * server is authoritative for monetization; this means the client's cached
+ * entitlement is stale (expired/cancelled/transferred). The turn engine catches
+ * it, refreshes RevenueCat, and routes to the paywall.
+ */
+export class NotEntitledError extends Error {
+  constructor() {
+    super('not_entitled');
+    this.name = 'NotEntitledError';
+  }
+}
+
+/**
  * Build the headers for an edge-fn call. Prefer the signed-in user's JWT so
  * the server can resolve auth.uid() in RLS / `usage_events.is_anon = false`;
  * fall back to the anon key when no session exists. The apikey header stays
@@ -134,6 +147,10 @@ async function callTurn(
     headers,
     body: form,
   });
+  if (res.status === 403) {
+    // Server says the caller isn't entitled — cached entitlement is stale.
+    throw new NotEntitledError();
+  }
   if (res.status === 402) {
     // Daily cap hit server-side. Surface to the store + throw a typed sentinel
     // the turn engine catches without retrying.

@@ -42,7 +42,9 @@ import {
 } from '@/lib/db/sessions';
 import { tickStreak } from '@/lib/streak';
 import { consolidateProfile } from '@/lib/services';
-import { DailyCapError } from '@/lib/services/supabaseService';
+import { router } from 'expo-router';
+
+import { DailyCapError, NotEntitledError } from '@/lib/services/supabaseService';
 import {
   GRACE_MS,
   MAX_CORRECTIONS_PER_TURN,
@@ -347,7 +349,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
       // One automatic retry after 3s on failure (spec §10.2).
       let response: TurnResponse | null = null;
       let capHit = false;
-      for (let attempt = 0; attempt < 2 && response == null && !capHit; attempt += 1) {
+      let notEntitled = false;
+      for (let attempt = 0; attempt < 2 && response == null && !capHit && !notEntitled; attempt += 1) {
         try {
           response = await store().service.sendTurn(
             { audioUri: input.audioUri ?? null, text: input.text ?? null },
@@ -359,9 +362,23 @@ export function useTurnEngine(online: boolean): TurnEngine {
             capHit = true;
             break;
           }
+          if (e instanceof NotEntitledError) {
+            // Server says the subscription is no longer valid. Don't retry.
+            notEntitled = true;
+            break;
+          }
           if (attempt === 0) await wait(3000);
         }
         if (!alive) return;
+      }
+
+      if (notEntitled) {
+        // Re-pull RevenueCat truth (flips the gate live) and send the user to the
+        // paywall rather than apologising for a server error.
+        void useSubscriptionStore.getState().refresh();
+        store().setTurnState('idle');
+        router.replace('/paywall' as never);
+        return;
       }
 
       if (capHit) {
