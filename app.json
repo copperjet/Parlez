@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "com.denny32.parlez",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
