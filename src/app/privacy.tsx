@@ -12,6 +12,7 @@ import {
   clearStructuredProfile,
   saveProfileSummary,
 } from '@/lib/db/sessions';
+import { voiceName } from '@/lib/constants';
 import { ENV } from '@/lib/env';
 import { FontSize, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
@@ -37,11 +38,12 @@ export default function Privacy() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const resetAll = useAppStore((s) => s.resetAll);
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   const confirmDelete = () => {
     Alert.alert(
       'Delete all my data?',
-      'This permanently removes your conversations, your streak, and everything Marie has learned about you. This cannot be undone.',
+      `This permanently removes your conversations, your streak, and everything ${personaName} has learned about you. This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {

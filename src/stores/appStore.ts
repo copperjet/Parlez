@@ -31,7 +31,7 @@ function shiftLevel(level: Level, signal: LevelSignal): Level {
 
 export const DEFAULT_SETTINGS: Settings = {
   speechSpeed: 'normal',
-  voice: 'marie',
+  voice: 'camille',
   micSensitivity: 'auto',
   haptics: true,
 };

@@ -12,7 +12,7 @@ import {
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { SPLASH_MS } from '@/lib/constants';
+import { SPLASH_MS, voiceName } from '@/lib/constants';
 import { requestRecognitionPermissions } from '@/lib/audio/recognizer';
 import { saveOnboarding } from '@/lib/db/sessions';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
@@ -38,6 +38,7 @@ export default function Onboarding() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const completeOnboarding = useAppStore((s) => s.completeOnboarding);
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   const [step, setStep] = useState<Step>('splash');
   const [denied, setDenied] = useState(false);
@@ -122,11 +123,11 @@ export default function Onboarding() {
         <Animated.View entering={FadeIn.duration(400)} style={styles.flex}>
           <View style={styles.center}>
             <Text style={[styles.title, { color: colors.text }]}>
-              Parlez listens to your voice so Marie can speak with you.
+              Parlez listens to your voice so {personaName} can speak with you.
             </Text>
             {denied ? (
               <Text style={[styles.denied, { color: colors.textSecondary }]}>
-                Microphone access is off. Marie needs it to hear you — you can
+                Microphone access is off. {personaName} needs it to hear you — you can
                 enable it in Settings.
               </Text>
             ) : null}

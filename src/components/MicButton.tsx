@@ -10,8 +10,10 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { voiceName } from '@/lib/constants';
 import type { TurnState } from '@/lib/types';
 import { Radius, useTheme } from '@/lib/theme';
+import { useAppStore } from '@/stores/appStore';
 
 const SIZE = 84;
 
@@ -31,6 +33,7 @@ export function MicButton({
   onLongPress?: () => void;
 }) {
   const { colors } = useTheme();
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   const active = turnState === 'listening' || turnState === 'recording';
   const interruptible = turnState === 'marie_speaking';
@@ -71,7 +74,7 @@ export function MicButton({
   const iconName = turnState === 'recording' ? 'stop' : 'mic';
 
   const label = interruptible
-    ? 'Tap to interrupt Marie'
+    ? `Tap to interrupt ${personaName}`
     : turnState === 'recording'
       ? 'Stop recording'
       : 'Speak';

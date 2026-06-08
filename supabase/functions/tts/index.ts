@@ -1,10 +1,10 @@
 /**
- * `tts` Edge Function — Marie's voice (spec §6.2). Converts her text into
+ * `tts` Edge Function — the persona's voice (spec §6.2). Converts her text into
  * speech with ElevenLabs and streams the audio straight back to the client so
  * the first chunk plays fast.
  *
  * Called as a GET so the mobile audio player can stream it directly:
- *   /tts?text=...&voice=marie&speed=1.0&app_user_id=<rc anon uuid when not signed in>
+ *   /tts?text=...&voice=camille&speed=1.0&app_user_id=<rc anon uuid when not signed in>
  *
  * Phase 2 monetization: logs `text.length` chars per call into `usage_events`
  * (non-blocking) for cost telemetry.
@@ -15,7 +15,7 @@ import { serviceClient } from '../_shared/db.ts';
 import { loadEntitlement } from '../_shared/caps.ts';
 import { estimateTtsMicrocents } from '../_shared/pricing.ts';
 
-/** Map Marie's voice ids to ElevenLabs voice ids (override via env). */
+/** Map the persona's voice ids to ElevenLabs voice ids (override via env). */
 function voiceId(voice: string): string {
   const env = Deno.env.get(`ELEVENLABS_VOICE_${voice.toUpperCase()}`);
   if (env) return env;
@@ -31,7 +31,7 @@ Deno.serve(async (req: Request) => {
   try {
     const url = new URL(req.url);
     const text = url.searchParams.get('text') ?? '';
-    const voice = url.searchParams.get('voice') ?? 'marie';
+    const voice = url.searchParams.get('voice') ?? 'camille';
     const speed = Number(url.searchParams.get('speed') ?? '1.0');
     const appUserId = url.searchParams.get('app_user_id');
 

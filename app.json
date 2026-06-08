@@ -15,8 +15,8 @@
         "UIBackgroundModes": [
           "audio"
         ],
-        "NSSpeechRecognitionUsageDescription": "Parlez uses speech recognition so Marie can understand your French when you are offline.",
-        "NSMicrophoneUsageDescription": "Parlez listens to your voice so Marie can speak with you."
+        "NSSpeechRecognitionUsageDescription": "Parlez uses speech recognition so Camille can understand your French when you are offline.",
+        "NSMicrophoneUsageDescription": "Parlez listens to your voice so Camille can speak with you."
       },
       "entitlements": {
         "com.apple.developer.applesignin": ["Default"]
@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "com.denny32.parlez",
-      "versionCode": 2,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -62,15 +62,15 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Parlez listens to your voice so Marie can speak with you."
+          "microphonePermission": "Parlez listens to your voice so Camille can speak with you."
         }
       ],
       "expo-sqlite",
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Parlez listens to your voice so Marie can speak with you.",
-          "speechRecognitionPermission": "Parlez uses speech recognition so Marie can understand your French when you are offline."
+          "microphonePermission": "Parlez listens to your voice so Camille can speak with you.",
+          "speechRecognitionPermission": "Parlez uses speech recognition so Camille can understand your French when you are offline."
         }
       ],
       [

@@ -11,7 +11,9 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { voiceName } from '@/lib/constants';
 import { Radius, Spacing, useTheme } from '@/lib/theme';
+import { useAppStore } from '@/stores/appStore';
 
 function Dot({ index, color }: { index: number; color: string }) {
   const t = useSharedValue(0);
@@ -45,13 +47,14 @@ function Dot({ index, color }: { index: number; color: string }) {
  */
 export function ThinkingIndicator() {
   const { colors } = useTheme();
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   return (
     <View style={styles.row}>
       <View
         style={[styles.bubble, { backgroundColor: colors.marieBubble }]}
         accessibilityRole="text"
-        accessibilityLabel="Marie is thinking">
+        accessibilityLabel={`${personaName} is thinking`}>
         {[0, 1, 2].map((i) => (
           <Dot key={i} index={i} color={colors.textSecondary} />
         ))}

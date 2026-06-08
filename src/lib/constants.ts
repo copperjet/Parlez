@@ -40,7 +40,7 @@ export const MAX_CORRECTIONS_PER_TURN = 2;
 
 /** Marie's available TTS voices (spec §6.2). */
 export const MARIE_VOICES = [
-  { id: 'marie', label: 'Marie', gender: 'female' },
+  { id: 'camille', label: 'Camille', gender: 'neutral' },
   { id: 'claire', label: 'Claire', gender: 'female' },
   { id: 'henri', label: 'Henri', gender: 'male' },
 ] as const;
@@ -53,5 +53,5 @@ export type MarieVoiceId = (typeof MARIE_VOICES)[number]['id'];
  * accessibility labels, error banners, and the AI's system prompt.
  */
 export function voiceName(id: MarieVoiceId): string {
-  return MARIE_VOICES.find((v) => v.id === id)?.label ?? 'Marie';
+  return MARIE_VOICES.find((v) => v.id === id)?.label ?? 'Camille';
 }

@@ -57,7 +57,7 @@ function normalizeContext(raw: unknown): PromptContext {
     personaName:
       typeof c.personaName === 'string' && c.personaName.trim()
         ? c.personaName.trim()
-        : 'Marie',
+        : 'Camille',
     learnerName:
       typeof c.learnerName === 'string' && c.learnerName.trim()
         ? c.learnerName.trim()

@@ -58,7 +58,7 @@ export function buildSystemPrompt(
   mode: TurnMode,
   simpler: boolean,
 ): SystemPromptParts {
-  const name = ctx.personaName?.trim() || 'Marie';
+  const name = ctx.personaName?.trim() || 'Camille';
 
   const stable = `You are ${name}, a warm, patient French conversation partner in the Parlez app.
 

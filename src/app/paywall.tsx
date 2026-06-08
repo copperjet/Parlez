@@ -24,7 +24,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { PurchasesPackage } from 'react-native-purchases';
 
+import { voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
+import { useAppStore } from '@/stores/appStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 type TierId = 'monthly' | 'annual' | 'lifetime';
@@ -62,6 +64,7 @@ export default function Paywall() {
   const router = useRouter();
   const params = useLocalSearchParams<{ reason?: string }>();
   const reasonCap = params.reason === 'cap';
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   const offerings = useSubscriptionStore((s) => s.offerings);
   const loading = useSubscriptionStore((s) => s.loading);
@@ -163,7 +166,7 @@ export default function Paywall() {
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           {reasonCap
             ? 'You’ve hit your daily limit. Annual gives you 3× more practice for less than half the monthly rate.'
-            : 'Real conversation with Marie. No flashcards. 10 minutes a day.'}
+            : `Real conversation with ${personaName}. No flashcards. 10 minutes a day.`}
         </Text>
 
         <View style={styles.tiers}>
@@ -193,7 +196,7 @@ export default function Paywall() {
               tier="lifetime"
               pkg={tiers.lifetime}
               label="Lifetime"
-              caption="One payment. Yours forever."
+              caption="One payment. Yours forever. 30-day money-back guarantee."
               selected={selected === 'lifetime'}
               onPress={() => setSelected('lifetime')}
             />
@@ -230,7 +233,7 @@ export default function Paywall() {
             ? `${trial.phrase} free, then ${selectedPkg?.product.priceString ?? ''}${
                 selected === 'annual' ? ' billed yearly' : ' billed monthly'
               }. Cancel anytime in Google Play.`
-            : 'One-time payment. No subscription, no renewal.'}
+            : 'One-time payment. No subscription, no renewal. 30-day money-back guarantee.'}
         </Text>
 
         <Pressable onPress={() => refresh()} hitSlop={10} style={styles.refresh}>

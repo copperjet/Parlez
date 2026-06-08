@@ -192,7 +192,7 @@ export function createMockService(): ConversationService {
     async openTurn(ctx: TurnContext): Promise<TurnResponse> {
       await delay(800);
       const returning = ctx.history.length > 0 || ctx.gapSinceLastSession != null;
-      const name = ctx.personaName?.trim() || 'Marie';
+      const name = ctx.personaName?.trim() || 'Camille';
       return {
         transcript: '',
         speechText: returning ? RETURNING_OPENING : FIRST_OPENINGS[ctx.level](name),
