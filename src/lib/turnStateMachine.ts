@@ -130,6 +130,17 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let recognitionUri: string | null = null;
     /** Tick streak once per session, only after a real user reply. */
     let streakTickedThisSession = false;
+    /**
+     * Live chat toggle (spec §6.3, tap-to-toggle model). The mic is OFF by
+     * default: Camille greets, then waits. Tapping turns live mode on and starts
+     * the listen→record→send→reply loop; tapping again turns it off (mic idle).
+     * Only while this is true does a finished turn auto-continue listening.
+     */
+    let liveMode = false;
+    /** Set when the user barges in during Camille's speech — resume into listening, not grace. */
+    let interruptedDuringSpeak = false;
+    /** Consecutive empty recognizer ends — guards against an Android error storm. */
+    let emptyEndStreak = 0;
 
     const store = () => useAppStore.getState();
     const phase = () => store().turnState;
@@ -247,6 +258,24 @@ export function useTurnEngine(online: boolean): TurnEngine {
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = null;
     };
+    const clearGraceTimer = () => {
+      if (graceTimer) clearTimeout(graceTimer);
+      graceTimer = null;
+    };
+
+    /** Leave live mode: silence the mic, drop every timer, return to idle. */
+    const turnOff = () => {
+      liveMode = false;
+      awaitingEnd = false;
+      stopPoll();
+      clearSilenceTimer();
+      clearEndFallback();
+      clearGraceTimer();
+      abortRecognition();
+      setMicLevel(0);
+      store().setLiveTranscript('');
+      store().setTurnState('idle');
+    };
 
     const enterGrace = () => {
       if (!alive) return;
@@ -289,9 +318,23 @@ export function useTurnEngine(online: boolean): TurnEngine {
       );
 
       s.setTurnState('marie_speaking');
+      interruptedDuringSpeak = false;
       await player.play(speech, store().settings.speechSpeed);
       if (!alive) return;
-      enterGrace();
+      // Barge-in: the user tapped to interrupt — resume listening immediately,
+      // skipping the grace pause.
+      if (interruptedDuringSpeak) {
+        interruptedDuringSpeak = false;
+        void startListening();
+        return;
+      }
+      // Otherwise only keep the conversation going while live mode is on; with it
+      // off, Camille has spoken her piece and we wait for the next tap.
+      if (liveMode) {
+        enterGrace();
+      } else {
+        store().setTurnState('idle');
+      }
     };
 
     /** The user stayed silent — Marie gives a gentle nudge (spec §6.3). */
@@ -454,11 +497,26 @@ export function useTurnEngine(online: boolean): TurnEngine {
       const uri = recognitionUri;
       store().setLiveTranscript('');
 
-      // Auto-ended with nothing heard — treat as silence, not a failed turn.
+      // Auto-ended with nothing heard. This is NOT user silence — the genuine
+      // silence nudge is driven solely by the silence timer (onSilence). An empty
+      // `end` here is the recognizer cycling (notably Android firing end+error
+      // straight away), so we must NOT call the server, or it re-greets on every
+      // empty turn ("Bonjour, je m'appelle Camille…" spam). Just listen again.
       if (!text && !manualStop) {
-        await onSilence();
+        emptyEndStreak += 1;
+        // Runaway recognizer (mic busy / unavailable): stop looping, drop to idle
+        // with one non-scary banner instead of a silent dead mic.
+        if (emptyEndStreak >= 4) {
+          emptyEndStreak = 0;
+          store().setErrorNotice('Couldn’t hear the mic — tap to try again.');
+          turnOff();
+          return;
+        }
+        if (liveMode) void startListening();
+        else store().setTurnState('idle');
         return;
       }
+      emptyEndStreak = 0;
 
       const isOnline = onlineRef.current;
       // Send the recorded audio to cloud Whisper as the PRIMARY transcript when
@@ -594,6 +652,15 @@ export function useTurnEngine(online: boolean): TurnEngine {
       audioend: (e) => {
         recognitionUri = e.uri;
       },
+      error: () => {
+        // Recognizer failed (no-speech, mic busy, etc.). `end` normally follows
+        // and drives consumeRecognition; arm the fallback so we never hang if it
+        // doesn't. The empty-text path then re-listens (or stops on a storm)
+        // without hitting the server.
+        if (!alive || !awaitingEnd) return;
+        clearEndFallback();
+        endFallbackTimer = setTimeout(() => void consumeRecognition(), END_FALLBACK_MS);
+      },
       end: () => {
         clearEndFallback();
         void consumeRecognition();
@@ -603,11 +670,24 @@ export function useTurnEngine(online: boolean): TurnEngine {
     onMicPressRef.current = () => {
       const p = phase();
       if (p === 'marie_speaking') {
+        // Barge-in: cut Camille off and listen immediately (interruptedDuringSpeak
+        // is read by speak()'s tail). Tapping mid-speech keeps us in live mode.
+        interruptedDuringSpeak = true;
+        liveMode = true;
+        store().setErrorNotice(null);
         player.interrupt();
       } else if (p === 'listening' || p === 'recording') {
-        requestFinish(true);
+        // Live mode toggle OFF — stop the mic and return to idle.
+        turnOff();
+      } else if (p === 'grace') {
+        // Tapped between turns — leave live mode rather than auto-continuing.
+        turnOff();
       } else if (p === 'idle') {
-        void start();
+        // Live mode toggle ON — the greeting has already played; start listening.
+        emptyEndStreak = 0;
+        liveMode = true;
+        store().setErrorNotice(null);
+        void startListening();
       }
     };
     submitTextRef.current = (text: string) => void submitText(text);

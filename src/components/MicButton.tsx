@@ -38,8 +38,8 @@ export function MicButton({
   const active = turnState === 'listening' || turnState === 'recording';
   const interruptible = turnState === 'marie_speaking';
   const pending = turnState === 'processing';
-  // Grace is non-pressable but visually "about to activate", not dead.
-  const disabled = turnState === 'grace' || pending;
+  // Only processing is non-pressable. Grace is tappable (tap = leave live mode).
+  const disabled = pending;
 
   const ring = useSharedValue(0);
   const press = useSharedValue(1);
@@ -71,13 +71,14 @@ export function MicButton({
       ? colors.surfaceMuted
       : colors.accent;
   const iconColor = interruptible ? colors.textSecondary : colors.onAccent;
-  const iconName = turnState === 'recording' ? 'stop' : 'mic';
+  // Live (listening/recording) shows a stop glyph — tapping ends the live chat.
+  const iconName = active ? 'stop' : 'mic';
 
   const label = interruptible
     ? `Tap to interrupt ${personaName}`
-    : turnState === 'recording'
-      ? 'Stop recording'
-      : 'Speak';
+    : active
+      ? 'Tap to stop'
+      : 'Tap to talk';
 
   return (
     <View style={styles.wrap}>

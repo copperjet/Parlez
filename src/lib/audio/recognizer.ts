@@ -50,6 +50,8 @@ type RecognitionHandlers = {
   result?: (e: ExpoSpeechRecognitionNativeEventMap['result']) => void;
   volumechange?: (e: ExpoSpeechRecognitionNativeEventMap['volumechange']) => void;
   audioend?: (e: ExpoSpeechRecognitionNativeEventMap['audioend']) => void;
+  /** Hard recognizer failure (mic busy, no-speech, etc.) — fires before `end`. */
+  error?: (e: ExpoSpeechRecognitionNativeEventMap['error']) => void;
   end?: () => void;
 };
 

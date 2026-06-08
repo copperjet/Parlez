@@ -433,8 +433,8 @@ Deno.serve(async (req: Request) => {
     if (mode === 'reply' && audio instanceof File) {
       // Whisper is the accurate path, but device audio can arrive empty or in an
       // unsupported container (notably Android's system recognizer, which doesn't
-      // expose a usable recording). Fall back to the client's device transcript
-      // instead of failing the whole turn; only rethrow if we have nothing.
+      // expose a usable recording). Fall back to the client's device transcript;
+      // if that's also empty we surface a clean STT-miss below — never a 500.
       try {
         const whisper = await transcribe(audio, ctx);
         if (whisper.text) transcript = whisper.text;
@@ -450,8 +450,25 @@ Deno.serve(async (req: Request) => {
           });
         }
       } catch (e) {
-        if (!transcript) throw e;
+        // Log and drop through — the empty-transcript guard handles the reply.
+        console.error('whisper failed', e instanceof Error ? e.message : e);
       }
+    }
+
+    // Nothing transcribed (unusable audio + no device text) — return a 200 STT-miss
+    // the client renders as a gentle re-prompt, rather than letting Camille answer
+    // silence or leaking a 500 the UI shows as "couldn't respond".
+    if (mode === 'reply' && !transcript.trim()) {
+      return json({
+        transcript: '',
+        speechText: '',
+        translation: '',
+        corrections: [],
+        profileNotes: [],
+        levelSignal: 'hold',
+        learnerName: null,
+        interests: [],
+      });
     }
 
     const { ai, usage } = await generate(ctx, mode, simpler, transcript);
