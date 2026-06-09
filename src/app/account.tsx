@@ -31,11 +31,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { onSignIn } from '@/lib/sync';
 import { supabase, syncAvailable } from '@/lib/supabase';
+import {
+  clearActivity,
+  clearMessages,
+  clearStreak,
+  clearStructuredProfile,
+  saveProfileSummary,
+} from '@/lib/db/sessions';
+import { clearProfile } from '@/lib/db/profile';
+import { useAppStore } from '@/stores/appStore';
+import { planSummary, useSubscriptionStore } from '@/stores/subscriptionStore';
 
 interface AccountInfo {
   id: string;
   email: string | null;
-  provider: string | null;
 }
 
 async function loadAccount(): Promise<AccountInfo | null> {
@@ -45,7 +54,6 @@ async function loadAccount(): Promise<AccountInfo | null> {
   return {
     id: data.user.id,
     email: data.user.email ?? null,
-    provider: data.user.app_metadata?.provider ?? null,
   };
 }
 
@@ -69,6 +77,11 @@ export default function Account() {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const isTrialing = useSubscriptionStore((s) => s.isTrialing);
+  const tier = useSubscriptionStore((s) => s.tier);
+  const streakCount = useAppStore((s) => s.streakCount);
 
   // Android email/password form state
   const [email, setEmail] = useState('');
@@ -178,8 +191,14 @@ export default function Account() {
             if (!supabase) return;
             setBusy(true);
             try {
-              await supabase.auth.signOut();
+              const { error } = await supabase.auth.signOut();
+              if (error) throw error;
               setAccount(null);
+            } catch (err: unknown) {
+              Alert.alert(
+                'Could not sign out',
+                err instanceof Error ? err.message : 'Please try again later.',
+              );
             } finally {
               setBusy(false);
             }
@@ -192,7 +211,7 @@ export default function Account() {
   const confirmDeleteAccount = () => {
     Alert.alert(
       'Delete account?',
-      'This permanently removes your account and subscription data. Your local progress stays on this device.',
+      'This permanently removes your account, your subscription record, and everything on this device. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -202,11 +221,24 @@ export default function Account() {
             if (!supabase) return;
             setBusy(true);
             try {
+              // The function derives the user from the bearer JWT this call
+              // attaches automatically — no body needed.
               const { error } = await (supabase as any).functions.invoke('delete-account');
               if (error) throw error;
+
+              // True deletion: also wipe the local footprint and the cached
+              // entitlement, then drop the session.
+              useAppStore.getState().resetAll();
+              void clearMessages();
+              void clearProfile();
+              void clearStructuredProfile();
+              void clearStreak();
+              void clearActivity();
+              void saveProfileSummary('');
+              await useSubscriptionStore.getState().logOutAndReset();
               await supabase.auth.signOut();
               setAccount(null);
-              Alert.alert('Account deleted', 'Your account has been removed.');
+              Alert.alert('Account deleted', 'Your account and data have been removed.');
             } catch (err: unknown) {
               Alert.alert(
                 'Could not delete account',
@@ -251,10 +283,12 @@ export default function Account() {
           <>
             <View style={[styles.card, { backgroundColor: colors.surface }]}>
               <InfoRow label="Email" value={account.email ?? 'Hidden by Apple'} />
-              {account.provider ? (
-                <InfoRow label="Provider" value={account.provider} />
-              ) : null}
-              <InfoRow label="Sync" value="On — progress synced across devices" />
+              <InfoRow label="Plan" value={planSummary({ isPremium, isTrialing, tier })} />
+              <InfoRow
+                label="Streak"
+                value={streakCount > 0 ? `Day ${streakCount}` : 'Not started yet'}
+              />
+              <InfoRow label="Sync" value="On, progress synced across devices" />
             </View>
 
             <Pressable

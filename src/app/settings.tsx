@@ -16,7 +16,8 @@ import {
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import type { Settings as AppSettings } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
-import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { useAuthStore } from '@/stores/authStore';
+import { planSummary, useSubscriptionStore } from '@/stores/subscriptionStore';
 
 const PLAY_SUB_URL =
   'https://play.google.com/store/account/subscriptions?package=com.denny32.parlez';
@@ -95,7 +96,18 @@ export default function Settings() {
   const streakCount = useAppStore((s) => s.streakCount);
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isTrialing = useSubscriptionStore((s) => s.isTrialing);
+  const tier = useSubscriptionStore((s) => s.tier);
   const restore = useSubscriptionStore((s) => s.restore);
+
+  const isSignedIn = useAuthStore((s) => s.isSignedIn);
+  const email = useAuthStore((s) => s.email);
+
+  // Right-side label for the Account row: reacts live to sign-in and plan.
+  const accountStatus = !isSignedIn
+    ? 'Sign in to sync'
+    : isPremium
+      ? planSummary({ isPremium, isTrialing, tier })
+      : (email ?? 'Synced');
 
   const onManageSub = () => {
     void WebBrowser.openBrowserAsync(SUB_URL);
@@ -212,8 +224,10 @@ export default function Settings() {
           style={[styles.linkRow, { borderBottomColor: colors.border }]}>
           <Text style={[styles.rowLabel, { color: colors.text }]}>Account</Text>
           <View style={styles.linkRight}>
-            <Text style={{ color: colors.textSecondary, fontSize: FontSize.caption }}>
-              Sign in to sync
+            <Text
+              numberOfLines={1}
+              style={[styles.linkValue, { color: colors.textSecondary }]}>
+              {accountStatus}
             </Text>
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
           </View>
@@ -309,7 +323,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  linkRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  linkRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, flexShrink: 1 },
+  linkValue: { fontSize: FontSize.caption, flexShrink: 1, maxWidth: 200, textAlign: 'right' },
   clearRow: { paddingVertical: Spacing.xl, alignItems: 'center' },
   clearText: { fontSize: FontSize.body, fontWeight: '600' },
   streakValue: { fontSize: FontSize.body, fontWeight: '600' },

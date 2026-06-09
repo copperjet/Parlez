@@ -411,6 +411,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       let response: TurnResponse | null = null;
       let capHit = false;
       let notEntitled = false;
+      let lastTurnError: string | null = null;
       for (let attempt = 0; attempt < 2 && response == null && !capHit && !notEntitled; attempt += 1) {
         try {
           response = await store().service.sendTurn(
@@ -428,6 +429,10 @@ export function useTurnEngine(online: boolean): TurnEngine {
             notEntitled = true;
             break;
           }
+          // Keep the real cause (server error body / network message) so it can be
+          // surfaced for diagnosis instead of vanishing behind the generic banner.
+          lastTurnError = e instanceof Error ? e.message : String(e);
+          if (__DEV__) console.warn('[turn]', lastTurnError);
           if (attempt === 0) await wait(3000);
         }
         if (!alive) return;

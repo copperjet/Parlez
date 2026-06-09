@@ -24,15 +24,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { PurchasesPackage } from 'react-native-purchases';
 
-import { voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
-import { useAppStore } from '@/stores/appStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 type TierId = 'monthly' | 'annual' | 'lifetime';
 
 const TERMS_URL = 'https://codarti.com/parlez/terms';
 const PRIVACY_URL = 'https://codarti.com/parlez/privacy';
+
+/** Outcome guarantee shown under the CTA on every tier (spec: speak-or-refund). */
+const GUARANTEE =
+  '30-day money-back guarantee. Do 10 minutes a day. If you can’t hold a basic conversation, we refund everything — no questions.';
 
 function classify(pkg: PurchasesPackage): TierId | null {
   const type = pkg.packageType;
@@ -64,7 +66,6 @@ export default function Paywall() {
   const router = useRouter();
   const params = useLocalSearchParams<{ reason?: string }>();
   const reasonCap = params.reason === 'cap';
-  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
   const offerings = useSubscriptionStore((s) => s.offerings);
   const loading = useSubscriptionStore((s) => s.loading);
@@ -149,10 +150,16 @@ export default function Paywall() {
       <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
         <Pressable
           onPress={onRestore}
+          disabled={loading}
           accessibilityRole="button"
           accessibilityLabel="Restore purchases"
+          accessibilityState={{ disabled: loading }}
           hitSlop={10}>
-          <Text style={[styles.restoreLink, { color: colors.textSecondary }]}>
+          <Text
+            style={[
+              styles.restoreLink,
+              { color: colors.textSecondary, opacity: loading ? 0.5 : 1 },
+            ]}>
             Restore
           </Text>
         </Pressable>
@@ -161,12 +168,14 @@ export default function Paywall() {
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + Spacing.xl }]}>
         <Text style={[styles.title, { color: colors.text }]}>
-          {reasonCap ? 'Need more time? Upgrade to Annual.' : 'Speak French in 30 days.'}
+          {reasonCap
+            ? 'Keep going. You will speak French.'
+            : 'You will speak French. That’s the guarantee.'}
         </Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           {reasonCap
-            ? 'You’ve hit your daily limit. Annual gives you 3× more practice for less than half the monthly rate.'
-            : `Real conversation with ${personaName}. No flashcards. 10 minutes a day.`}
+            ? 'You’ve hit today’s limit. Annual gives you 3× the daily practice — and the same guarantee: speak, or your money back.'
+            : 'Every French app taught you words. Parlez makes you speak them — no flashcards, no grammar drills.'}
         </Text>
 
         <View style={styles.tiers}>
@@ -226,8 +235,10 @@ export default function Paywall() {
               {trial
                 ? `Start ${trial.length} free trial`
                 : selected === 'lifetime'
-                  ? 'Buy lifetime — one payment'
-                  : `Buy ${selected} — ${selectedPkg?.product.priceString ?? ''}`}
+                  ? 'Speak French — one payment'
+                  : `Speak French — ${selectedPkg?.product.priceString ?? ''}${
+                      selected === 'annual' ? '/yr' : '/mo'
+                    }`}
             </Text>
           )}
         </Pressable>
@@ -236,8 +247,10 @@ export default function Paywall() {
           {trial
             ? `${trial.phrase} free, then ${selectedPkg?.product.priceString ?? ''}${
                 selected === 'annual' ? ' billed yearly' : ' billed monthly'
-              }. Cancel anytime in Google Play.`
-            : 'One-time payment. No subscription, no renewal. 30-day money-back guarantee.'}
+              }, cancel anytime. ${GUARANTEE}`
+            : selected === 'lifetime'
+              ? `One payment. No subscription, no renewal. ${GUARANTEE}`
+              : GUARANTEE}
         </Text>
 
         <Pressable onPress={() => refresh()} hitSlop={10} style={styles.refresh}>

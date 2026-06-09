@@ -2,10 +2,16 @@
  * Account & subscription deletion endpoint (Play Store + GDPR requirement).
  *
  * GET  → HTML form. The URL is what Play Console's data-safety section links to.
- * POST → looks up the user (by email or by raw appUserID), then in parallel:
+ * POST → identifies the user one of two ways:
+ *        - in-app: the caller's `Authorization: Bearer <jwt>` is verified and the
+ *          Supabase user id + email are derived from it (no body needed).
+ *        - web form: an `email` and/or anonymous `appUserId` from the request body.
+ *        Then, in parallel for each resolved id:
  *        - calls RevenueCat `DELETE /v1/subscribers/{id}` to wipe the
  *          subscription record (keeps invoices, removes PII / entitlements).
- *        - deletes the `user_state` row in Postgres.
+ *        - deletes the `user_state`, `usage_events`, and `subscriptions` rows.
+ *        Finally, every confirmed Supabase user id has its `auth.users` record
+ *        deleted so the account is truly gone (not just its data).
  *
  * The RevenueCat *secret* key MUST be set as the function secret
  * `REVENUECAT_SECRET_KEY`. It is never exposed to clients.
@@ -133,6 +139,35 @@ async function lookupUserIdByEmail(
   }
 }
 
+/** Resolve the caller from their bearer JWT (the in-app delete path). */
+async function userFromBearer(
+  client: ReturnType<typeof createClient>,
+  req: Request,
+): Promise<{ id: string; email: string | null } | null> {
+  const auth = req.headers.get('authorization') ?? '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  try {
+    const { data } = await (client as any).auth.getUser(m[1]);
+    if (!data?.user) return null;
+    return { id: data.user.id, email: data.user.email ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** Delete the auth.users record itself — true account deletion. 404 is fine. */
+async function deleteAuthUser(
+  client: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<void> {
+  try {
+    await (client as any).auth.admin.deleteUser(userId);
+  } catch {
+    // already gone / not a Supabase user id — best-effort
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -157,6 +192,9 @@ Deno.serve(async (req: Request) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // In-app path: the caller is identified by their bearer JWT, no body needed.
+  const bearer = await userFromBearer(admin, req);
+
   let email = '';
   let appUserId = '';
   const ct = req.headers.get('content-type') ?? '';
@@ -165,24 +203,35 @@ Deno.serve(async (req: Request) => {
       const body = (await req.json()) as { email?: string; appUserId?: string };
       email = (body.email ?? '').trim();
       appUserId = (body.appUserId ?? '').trim();
-    } else {
+    } else if (ct.includes('form')) {
       const form = await req.formData();
       email = String(form.get('email') ?? '').trim();
       appUserId = String(form.get('appUserId') ?? '').trim();
     }
   } catch {
-    return html(done('Bad request.'), 400);
+    // Tolerate an absent/empty body — the in-app invoke sends none.
   }
 
-  if (!email && !appUserId) {
+  if (!bearer && !email && !appUserId) {
     return html(done('You must provide an email or an in-app User ID.'), 400);
   }
 
+  // `ids` = everything to purge data for. `authUserIds` = confirmed Supabase
+  // users whose auth.users record must also be deleted (anon RC ids are not).
   const ids = new Set<string>();
+  const authUserIds = new Set<string>();
+  if (bearer) {
+    ids.add(bearer.id);
+    authUserIds.add(bearer.id);
+    if (bearer.email) email = email || bearer.email;
+  }
   if (appUserId) ids.add(appUserId);
   if (email) {
     const uid = await lookupUserIdByEmail(admin, email);
-    if (uid) ids.add(uid);
+    if (uid) {
+      ids.add(uid);
+      authUserIds.add(uid);
+    }
   }
 
   if (ids.size === 0) {
@@ -201,6 +250,9 @@ Deno.serve(async (req: Request) => {
       deleteUsageAndSubscription(admin, id),
     ]),
   );
+
+  // Remove the auth records last, after their RLS-scoped rows are gone.
+  await Promise.all(Array.from(authUserIds).map((id) => deleteAuthUser(admin, id)));
 
   return html(
     done('Your account, subscription record, and learning profile have been deleted.'),

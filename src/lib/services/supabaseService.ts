@@ -129,16 +129,27 @@ async function callTurn(
   const appUserId = await getCallerId();
   if (appUserId) form.append('app_user_id', appUserId);
 
-  if (opts.audioUri) {
-    // The recognizer persists a .wav (or .caf on iOS); keep the extension so
-    // Whisper detects the format.
-    const ext = (opts.audioUri.split('.').pop() ?? 'wav').toLowerCase();
-    // Read the file into a real Blob. The React Native { uri, name, type } file
-    // shape throws "Unsupported FormDataPart implementation" under the runtime's
-    // fetch; fetching the file URI yields a Blob that FormData accepts.
-    const fileRes = await fetch(opts.audioUri);
-    const blob = await fileRes.blob();
-    form.append('audio', blob, `turn.${ext}`);
+  // Attach the recording for Whisper ONLY when we have no device transcript.
+  // Native STT (expo-speech-recognition) normally yields text directly, and the
+  // server falls back to that text anyway — so sending text-only is the common,
+  // correct path. It also sidesteps a hard runtime failure: under RN 0.85 /
+  // Hermes, `fetch(fileUri).blob()` throws "Creating blobs from 'ArrayBuffer'
+  // and 'ArrayBufferView' are not supported", which previously killed every
+  // spoken turn before the request even left the device. The blob build is
+  // additionally guarded so any failure degrades to a text/STT-miss turn rather
+  // than throwing.
+  if (opts.audioUri && !opts.text) {
+    try {
+      // The recognizer persists a .wav (or .caf on iOS); keep the extension so
+      // Whisper detects the format.
+      const ext = (opts.audioUri.split('.').pop() ?? 'wav').toLowerCase();
+      const fileRes = await fetch(opts.audioUri);
+      const blob = await fileRes.blob();
+      form.append('audio', blob, `turn.${ext}`);
+    } catch {
+      // Blob unsupported on this runtime — proceed without audio; the server
+      // returns a clean STT-miss the client renders as a gentle re-prompt.
+    }
   }
 
   const headers = await authHeaders();
@@ -170,7 +181,16 @@ async function callTurn(
     throw new DailyCapError(tier, capSeconds);
   }
   if (!res.ok) {
-    throw new Error(`turn failed: ${res.status}`);
+    // Capture the server's error body so the cause (e.g. `claude 404: model …`,
+    // `ANTHROPIC_API_KEY not set`, `whisper 401`) is diagnosable on-device instead
+    // of collapsing to a bare status. The turn engine surfaces this in DEV/diag.
+    let detail = '';
+    try {
+      detail = (await res.text()).slice(0, 300);
+    } catch {
+      // body unreadable — status alone
+    }
+    throw new Error(`turn ${res.status}${detail ? `: ${detail}` : ''}`);
   }
   return parseTurnResponse(await res.json());
 }

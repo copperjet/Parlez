@@ -12,6 +12,7 @@ import { initRevenueCat } from '@/lib/revenuecat';
 import { pushState } from '@/lib/sync';
 import { useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
+import { useAuthStore } from '@/stores/authStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 void SplashScreen.preventAutoHideAsync();
@@ -37,6 +38,7 @@ export default function RootLayout() {
         // Subscription bootstrap: configure RC, hydrate cached entitlement
         // before routing, then kick a background refresh.
         try {
+          useAuthStore.getState().init();
           await initRevenueCat();
           await useSubscriptionStore.getState().hydrateFromCache();
           await useSubscriptionStore.getState().hydrateUsageFromCache();

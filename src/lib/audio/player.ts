@@ -49,6 +49,15 @@ export class MariePlayer {
         }
         if (status.didJustFinish) this.finish();
       });
+      // Safety net: a stalled or errored stream (network drop, ElevenLabs 502
+      // body, unsupported chunk) never fires `didJustFinish`, which would hang
+      // the turn engine in `marie_speaking` with a dead mic. Finish anyway after
+      // a ceiling well above any real line (estimate caps at 9s) so legitimate
+      // speech is never cut off.
+      this.timer = setTimeout(
+        () => this.finish(),
+        Math.max(speech.durationMs * 2, 20000),
+      );
       player.play();
     });
   }

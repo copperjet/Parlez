@@ -9,3 +9,15 @@ verify_jwt = false
 
 [functions.tts]
 verify_jwt = false
+
+# RevenueCat posts a custom `Authorization: Bearer <RC_WEBHOOK_SECRET>` header,
+# not a Supabase JWT. Leaving verify_jwt on (the default) makes Supabase reject
+# every call with "Missing authorization header" before the function runs — the
+# 100% webhook error rate. The function verifies the secret itself.
+[functions.revenuecat-webhook]
+verify_jwt = false
+
+# Self-authenticating: the in-app path verifies the caller's bearer JWT inside
+# the function; the public web form (Play data-safety link) is unauthenticated.
+[functions.delete-account]
+verify_jwt = false

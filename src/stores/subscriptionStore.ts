@@ -81,6 +81,23 @@ interface SubscriptionStore {
   clearCapBlocked: () => void;
 }
 
+const TIER_LABEL: Record<Exclude<Tier, null>, string> = {
+  monthly: 'Monthly',
+  annual: 'Annual',
+  lifetime: 'Lifetime',
+};
+
+/** Human-readable plan summary shared by Settings and the Account screen. */
+export function planSummary(p: {
+  isPremium: boolean;
+  isTrialing: boolean;
+  tier: Tier;
+}): string {
+  if (!p.isPremium) return 'Free';
+  if (p.isTrialing) return 'Free trial';
+  return p.tier ? `Premium · ${TIER_LABEL[p.tier]}` : 'Premium';
+}
+
 function todayLocal(): string {
   const d = new Date();
   const y = d.getFullYear();

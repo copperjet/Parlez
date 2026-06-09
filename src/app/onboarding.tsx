@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -21,11 +22,11 @@ import { useAppStore } from '@/stores/appStore';
 
 type Step = 'splash' | 'level' | 'permission';
 
-const LEVEL_OPTIONS: { choice: OnboardingChoice; label: string }[] = [
-  { choice: 'nothing', label: 'Nothing yet — I’m starting fresh' },
-  { choice: 'little', label: 'A little — I know some words and phrases' },
-  { choice: 'some', label: 'Some — I studied French before but can’t really speak it' },
-  { choice: 'decent', label: 'Decent — I can have basic conversations' },
+const LEVEL_OPTIONS: { choice: OnboardingChoice; title: string; subtitle: string }[] = [
+  { choice: 'nothing', title: 'Starting fresh', subtitle: 'I don’t know any French yet' },
+  { choice: 'little', title: 'A little', subtitle: 'I know some words and phrases' },
+  { choice: 'some', title: 'Some', subtitle: 'I studied before but can’t really speak it' },
+  { choice: 'decent', title: 'Decent', subtitle: 'I can have basic conversations' },
 ];
 
 /**
@@ -103,7 +104,7 @@ export default function Onboarding() {
                 key={opt.choice}
                 onPress={() => pickLevel(opt.choice)}
                 accessibilityRole="button"
-                accessibilityLabel={opt.label}
+                accessibilityLabel={`${opt.title}. ${opt.subtitle}`}
                 style={({ pressed }) => [
                   styles.option,
                   {
@@ -112,7 +113,13 @@ export default function Onboarding() {
                     opacity: pressed ? 0.6 : 1,
                   },
                 ]}>
-                <Text style={[styles.optionText, { color: colors.text }]}>{opt.label}</Text>
+                <View style={styles.optionTextCol}>
+                  <Text style={[styles.optionTitle, { color: colors.text }]}>{opt.title}</Text>
+                  <Text style={[styles.optionSubtitle, { color: colors.textSecondary }]}>
+                    {opt.subtitle}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textFaint} />
               </Pressable>
             ))}
           </ScrollView>
@@ -196,12 +203,17 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.xl,
   },
   option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
     borderWidth: 1,
     borderRadius: Radius.lg,
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.lg,
   },
-  optionText: { fontSize: FontSize.body, lineHeight: FontSize.body * 1.35 },
+  optionTextCol: { flex: 1, gap: 3 },
+  optionTitle: { fontSize: FontSize.bubble, fontWeight: '700' },
+  optionSubtitle: { fontSize: FontSize.caption, lineHeight: FontSize.caption * 1.4 },
   denied: {
     fontSize: FontSize.body,
     textAlign: 'center',
