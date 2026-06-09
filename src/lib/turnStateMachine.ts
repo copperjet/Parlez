@@ -699,8 +699,13 @@ export function useTurnEngine(online: boolean): TurnEngine {
         liveMode = true;
         store().setErrorNotice(null);
         player.interrupt();
-      } else if (p === 'listening' || p === 'recording') {
-        // Live mode toggle OFF — stop the mic and return to idle.
+      } else if (p === 'recording') {
+        // The user has spoken (there's a live transcript) and tapped the stop
+        // glyph — finalize and SEND this turn now rather than discarding it.
+        // manualStop=true routes consumeRecognition straight to the server.
+        requestFinish(true);
+      } else if (p === 'listening') {
+        // Mic on but no speech yet — tapping cancels (leave live mode, go idle).
         turnOff();
       } else if (p === 'grace') {
         // Tapped between turns — leave live mode rather than auto-continuing.
