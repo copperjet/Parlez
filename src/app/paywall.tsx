@@ -223,7 +223,11 @@ export default function Paywall() {
             <ActivityIndicator color={colors.onAccent} />
           ) : (
             <Text style={[styles.ctaText, { color: colors.onAccent }]}>
-              {trial ? `Start ${trial.length} free trial` : 'Buy lifetime — one payment'}
+              {trial
+                ? `Start ${trial.length} free trial`
+                : selected === 'lifetime'
+                  ? 'Buy lifetime — one payment'
+                  : `Buy ${selected} — ${selectedPkg?.product.priceString ?? ''}`}
             </Text>
           )}
         </Pressable>

@@ -21,6 +21,7 @@ import { MariePlayer } from '@/lib/audio/player';
 import { configureAudioSession, isAudibleVoice, volumeToAmplitude } from '@/lib/audio/recorder';
 import {
   abortRecognition,
+  getRecognitionPermissions,
   isRecognitionAvailable,
   startRecognition,
   stopRecognition,
@@ -98,6 +99,21 @@ export interface TurnEngine {
   replay: (text: string) => void;
 }
 
+/**
+ * Map a recognizer failure to user-facing banner copy. The code comes from the
+ * `error` event (W3C SpeechRecognition error codes); we only special-case the
+ * ones a learner can act on, and otherwise keep the gentle "didn't hear" copy.
+ */
+function micFailureNotice(code: string | null, online: boolean): string {
+  if (code === 'not-allowed' || code === 'service-not-allowed') {
+    return 'Microphone access is off — turn it on in Settings.';
+  }
+  if (code === 'network' && !online) {
+    return 'You’re offline — voice needs a connection. Tap to retry.';
+  }
+  return 'Couldn’t hear the mic — tap to try again.';
+}
+
 export function useTurnEngine(online: boolean): TurnEngine {
   const playerRef = useRef<MariePlayer | null>(null);
   if (playerRef.current == null) playerRef.current = new MariePlayer();
@@ -141,6 +157,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let interruptedDuringSpeak = false;
     /** Consecutive empty recognizer ends — guards against an Android error storm. */
     let emptyEndStreak = 0;
+    /** Last recognizer `error` code this listen — drives the runaway banner copy. */
+    let lastRecognizerError: string | null = null;
 
     const store = () => useAppStore.getState();
     const phase = () => store().turnState;
@@ -508,7 +526,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         // with one non-scary banner instead of a silent dead mic.
         if (emptyEndStreak >= 4) {
           emptyEndStreak = 0;
-          store().setErrorNotice('Couldn’t hear the mic — tap to try again.');
+          store().setErrorNotice(micFailureNotice(lastRecognizerError, onlineRef.current));
           turnOff();
           return;
         }
@@ -517,6 +535,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         return;
       }
       emptyEndStreak = 0;
+      lastRecognizerError = null;
 
       const isOnline = onlineRef.current;
       // Send the recorded audio to cloud Whisper as the PRIMARY transcript when
@@ -574,6 +593,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       latestTranscript = '';
       recognitionUri = null;
       manualStop = false;
+      lastRecognizerError = null;
       setMicLevel(0);
       haptic('light');
 
@@ -652,11 +672,14 @@ export function useTurnEngine(online: boolean): TurnEngine {
       audioend: (e) => {
         recognitionUri = e.uri;
       },
-      error: () => {
-        // Recognizer failed (no-speech, mic busy, etc.). `end` normally follows
-        // and drives consumeRecognition; arm the fallback so we never hang if it
-        // doesn't. The empty-text path then re-listens (or stops on a storm)
-        // without hitting the server.
+      error: (e) => {
+        // Recognizer failed (no-speech, mic busy, permission, etc.). `end` normally
+        // follows and drives consumeRecognition; arm the fallback so we never hang
+        // if it doesn't. The empty-text path then re-listens (or stops on a storm)
+        // without hitting the server. Keep the code so the runaway banner can name
+        // the real cause instead of a single generic message.
+        lastRecognizerError = e.error ?? null;
+        if (__DEV__) console.warn('[stt]', e.error, e.message);
         if (!alive || !awaitingEnd) return;
         clearEndFallback();
         endFallbackTimer = setTimeout(() => void consumeRecognition(), END_FALLBACK_MS);
@@ -684,10 +707,20 @@ export function useTurnEngine(online: boolean): TurnEngine {
         turnOff();
       } else if (p === 'idle') {
         // Live mode toggle ON — the greeting has already played; start listening.
+        // Preflight the mic permission first: a revoked/never-granted mic would
+        // otherwise storm the recognizer straight into the runaway banner.
         emptyEndStreak = 0;
-        liveMode = true;
         store().setErrorNotice(null);
-        void startListening();
+        void (async () => {
+          const { granted } = await getRecognitionPermissions();
+          if (!alive) return;
+          if (!granted) {
+            store().setErrorNotice('Microphone access is off — turn it on in Settings.');
+            return;
+          }
+          liveMode = true;
+          void startListening();
+        })();
       }
     };
     submitTextRef.current = (text: string) => void submitText(text);

@@ -114,3 +114,19 @@ export async function requestRecognitionPermissions(): Promise<{ granted: boolea
   const res = await mod.requestPermissionsAsync();
   return { granted: res.granted };
 }
+
+/**
+ * Read current permission state without prompting. Used as a preflight before
+ * starting a live-mode listen so a revoked mic surfaces one clear message instead
+ * of storming the recognizer. Never throws; reports not-granted when no module.
+ */
+export async function getRecognitionPermissions(): Promise<{ granted: boolean }> {
+  const mod = getModule();
+  if (!mod) return { granted: false };
+  try {
+    const res = await mod.getPermissionsAsync();
+    return { granted: res.granted };
+  } catch {
+    return { granted: false };
+  }
+}
