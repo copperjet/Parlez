@@ -45,20 +45,44 @@ export const FRESH_TOPIC_GAP_MS = 48 * 60 * 60 * 1000;
 /** Max correction cards shown per Marie turn (spec §5.3.2). */
 export const MAX_CORRECTIONS_PER_TURN = 2;
 
-/** Marie's available TTS voices (spec §6.2). */
+/**
+ * The conversation partner's fixed name. "Camille" is gender-neutral, so it
+ * fits both the female and male voice. Single source of truth for the name in
+ * the header, accessibility labels, error banners, and the AI's system prompt.
+ */
+export const PERSONA_NAME = 'Camille';
+
+/**
+ * Available TTS voices (spec §6.2). The user no longer picks a named persona —
+ * just a voice gender — so this is now a two-entry registry keyed by gender.
+ * The multi-voice infrastructure (env-mapped `ELEVENLABS_VOICE_<ID>` on the
+ * server) is unchanged; we simply expose two of the configured voices.
+ */
 export const MARIE_VOICES = [
-  { id: 'camille', label: 'Camille', gender: 'neutral' },
-  { id: 'claire', label: 'Claire', gender: 'female' },
+  { id: 'camille', label: 'Camille', gender: 'female' },
   { id: 'henri', label: 'Henri', gender: 'male' },
 ] as const;
 export type MarieVoiceId = (typeof MARIE_VOICES)[number]['id'];
 
+export type VoiceGender = 'female' | 'male';
+
+/** Voice id used for each gender of the Female/Male toggle. */
+export const VOICE_BY_GENDER: Record<VoiceGender, MarieVoiceId> = {
+  female: 'camille',
+  male: 'henri',
+};
+
+/** Which gender toggle a stored voice id maps to. */
+export function genderOfVoice(id: MarieVoiceId): VoiceGender {
+  return id === 'henri' ? 'male' : 'female';
+}
+
 /**
- * The persona's display + spoken name for a given voice. The conversation
- * partner adopts the chosen voice's name, so a male voice is never called
- * "Marie". Single source of truth for the name shown in the header, used in
- * accessibility labels, error banners, and the AI's system prompt.
+ * The partner's name. Always {@link PERSONA_NAME} regardless of voice — the
+ * persona stays "Camille" whether the user hears the female or male voice.
+ * Kept as a function (taking the voice id) so every existing call site stays
+ * unchanged.
  */
-export function voiceName(id: MarieVoiceId): string {
-  return MARIE_VOICES.find((v) => v.id === id)?.label ?? 'Camille';
+export function voiceName(_id: MarieVoiceId): string {
+  return PERSONA_NAME;
 }

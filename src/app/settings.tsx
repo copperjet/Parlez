@@ -3,7 +3,13 @@ import { useRouter } from 'expo-router';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { MARIE_VOICES, voiceName, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
+import {
+  VOICE_BY_GENDER,
+  genderOfVoice,
+  voiceName,
+  type SpeechSpeed,
+  type VoiceGender,
+} from '@/lib/constants';
 import { clearProfile } from '@/lib/db/profile';
 import {
   clearMessages,
@@ -27,6 +33,11 @@ const SPEEDS: { id: SpeechSpeed; label: string }[] = [
 const SENSITIVITY: { id: 'auto' | 'manual'; label: string }[] = [
   { id: 'auto', label: 'Auto' },
   { id: 'manual', label: 'Manual' },
+];
+
+const VOICE_GENDERS: { id: VoiceGender; label: string }[] = [
+  { id: 'female', label: 'Female' },
+  { id: 'male', label: 'Male' },
 ];
 
 function Segmented<T extends string>({
@@ -166,9 +177,9 @@ export default function Settings() {
 
         <Row label="Voice">
           <Segmented
-            options={MARIE_VOICES.map((v) => ({ id: v.id, label: v.label }))}
-            value={settings.voice}
-            onChange={(voice: MarieVoiceId) => change({ voice })}
+            options={VOICE_GENDERS}
+            value={genderOfVoice(settings.voice)}
+            onChange={(gender: VoiceGender) => change({ voice: VOICE_BY_GENDER[gender] })}
           />
         </Row>
 

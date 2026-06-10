@@ -4,8 +4,19 @@
  * past messages feed the AI's context and the gap since last activity decides
  * whether Marie continues the old topic or starts fresh (spec §3.2).
  */
+import { MARIE_VOICES } from '@/lib/constants';
 import type { Correction, Level, Message, OnboardingChoice, Settings } from '@/lib/types';
 import { DEFAULT_SETTINGS } from '@/stores/appStore';
+
+/** Coerce a persisted settings blob onto the current shape (e.g. drop the
+ *  retired "claire" voice so legacy installs land on a valid Female voice). */
+function sanitizeSettings(raw: Partial<Settings>): Settings {
+  const merged = { ...DEFAULT_SETTINGS, ...raw };
+  if (!MARIE_VOICES.some((v) => v.id === merged.voice)) {
+    merged.voice = DEFAULT_SETTINGS.voice;
+  }
+  return merged;
+}
 
 import { getDb } from './index';
 
@@ -82,7 +93,7 @@ export async function loadPersistedState(): Promise<PersistedState> {
       onboardingChoice: (kv.get('onboardingChoice') as OnboardingChoice) ?? null,
       level: (kv.get('level') as Level) ?? 'B',
       settings: kv.get('settings')
-        ? { ...DEFAULT_SETTINGS, ...JSON.parse(kv.get('settings')!) }
+        ? sanitizeSettings(JSON.parse(kv.get('settings')!))
         : DEFAULT_SETTINGS,
       profileSummary: kv.get('profileSummary') ?? '',
       gapSinceLastSession: gap,

@@ -91,10 +91,22 @@ export default function Account() {
   const [subBusy, setSubBusy] = useState(false);
 
   // Android email/password form state
+  type AuthMode = 'signIn' | 'signUp' | 'resetRequest' | 'resetVerify';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn');
+  const [authMode, setAuthMode] = useState<AuthMode>('signIn');
   const [notice, setNotice] = useState('');
+  // Password-recovery state (OTP emailed by Supabase, no external service).
+  const [otpCode, setOtpCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+
+  /** Switch auth modes, dropping any stale notice / recovery input. */
+  const switchMode = (mode: AuthMode) => {
+    setAuthMode(mode);
+    setNotice('');
+    setOtpCode('');
+    setNewPassword('');
+  };
 
   const reload = useCallback(async () => {
     const acct = await loadAccount();
@@ -176,6 +188,58 @@ export default function Account() {
         await onSignIn(data.user.id);
         await reload();
       }
+    } catch {
+      setNotice('Something went wrong. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Android: forgot password (OTP recovery) ─────────────────────────────────
+  // Supabase's built-in mailer sends a 6-digit code (the Reset Password email
+  // template must include {{ .Token }}); verifyOtp(type:'recovery') signs the
+  // user in, then we set the new password on that session.
+
+  const requestReset = async () => {
+    if (!supabase || busy) return;
+    const addr = email.trim();
+    if (!addr) { setNotice('Enter your email first.'); return; }
+    setBusy(true);
+    setNotice('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(addr);
+      if (error) { setNotice(error.message); return; }
+      setAuthMode('resetVerify');
+      setNotice('Code sent — check your email.');
+    } catch {
+      setNotice('Something went wrong. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitReset = async () => {
+    if (!supabase || busy) return;
+    const addr = email.trim();
+    const token = otpCode.trim();
+    if (!token || !newPassword) { setNotice('Enter the code and a new password.'); return; }
+    setBusy(true);
+    setNotice('');
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: addr,
+        token,
+        type: 'recovery',
+      });
+      if (error) { setNotice(error.message); return; }
+      const { error: updErr } = await supabase.auth.updateUser({ password: newPassword });
+      if (updErr) { setNotice(updErr.message); return; }
+      if (data.user) {
+        await onSignIn(data.user.id);
+        await reload();
+      }
+      switchMode('signIn');
+      setNotice('Password updated.');
     } catch {
       setNotice('Something went wrong. Try again.');
     } finally {
@@ -319,36 +383,15 @@ export default function Account() {
             Account sync is not configured for this build.
           </Text>
         ) : account ? (
-          // ── Signed in ──────────────────────────────────────────────────────
-          <>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
-              <InfoRow label="Email" value={account.email ?? 'Hidden by Apple'} />
-              <InfoRow
-                label="Streak"
-                value={streakCount > 0 ? `Day ${streakCount}` : 'Not started yet'}
-              />
-              <InfoRow label="Sync" value="On, progress synced across devices" />
-            </View>
-
-            <Pressable
-              onPress={signOut}
-              disabled={busy}
-              accessibilityRole="button"
-              style={[
-                styles.secondaryBtn,
-                { borderColor: colors.border, opacity: busy ? 0.6 : 1 },
-              ]}>
-              <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Sign out</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={confirmDeleteAccount}
-              disabled={busy}
-              accessibilityRole="button"
-              style={styles.deleteRow}>
-              <Text style={[styles.deleteText, { color: colors.error }]}>Delete account…</Text>
-            </Pressable>
-          </>
+          // ── Signed in: account info (management actions live at the bottom) ──
+          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <InfoRow label="Email" value={account.email ?? 'Hidden by Apple'} />
+            <InfoRow
+              label="Streak"
+              value={streakCount > 0 ? `Day ${streakCount}` : 'Not started yet'}
+            />
+            <InfoRow label="Sync" value="On, progress synced across devices" />
+          </View>
         ) : (
           // ── Signed out ─────────────────────────────────────────────────────
           <>
@@ -380,7 +423,7 @@ export default function Account() {
                 />
               )
             ) : (
-              // Android: email + password
+              // Android: email + password (with OTP password recovery)
               <>
                 <TextInput
                   value={email}
@@ -394,19 +437,54 @@ export default function Account() {
                     { backgroundColor: colors.surface, color: colors.text },
                   ]}
                 />
-                <TextInput
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Password"
-                  placeholderTextColor={colors.textFaint}
-                  secureTextEntry
-                  style={[
-                    styles.input,
-                    { backgroundColor: colors.surface, color: colors.text },
-                  ]}
-                />
+                {authMode === 'signIn' || authMode === 'signUp' ? (
+                  <TextInput
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Password"
+                    placeholderTextColor={colors.textFaint}
+                    secureTextEntry
+                    style={[
+                      styles.input,
+                      { backgroundColor: colors.surface, color: colors.text },
+                    ]}
+                  />
+                ) : null}
+                {authMode === 'resetVerify' ? (
+                  <>
+                    <TextInput
+                      value={otpCode}
+                      onChangeText={setOtpCode}
+                      placeholder="6-digit code from the email"
+                      placeholderTextColor={colors.textFaint}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      style={[
+                        styles.input,
+                        { backgroundColor: colors.surface, color: colors.text },
+                      ]}
+                    />
+                    <TextInput
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      placeholder="New password"
+                      placeholderTextColor={colors.textFaint}
+                      secureTextEntry
+                      style={[
+                        styles.input,
+                        { backgroundColor: colors.surface, color: colors.text },
+                      ]}
+                    />
+                  </>
+                ) : null}
                 <Pressable
-                  onPress={submitEmailAuth}
+                  onPress={
+                    authMode === 'resetRequest'
+                      ? requestReset
+                      : authMode === 'resetVerify'
+                        ? submitReset
+                        : submitEmailAuth
+                  }
                   disabled={busy}
                   accessibilityRole="button"
                   style={[
@@ -417,20 +495,36 @@ export default function Account() {
                     <ActivityIndicator color={colors.onAccent} />
                   ) : (
                     <Text style={[styles.primaryBtnText, { color: colors.onAccent }]}>
-                      {authMode === 'signIn' ? 'Sign in' : 'Create account'}
+                      {authMode === 'signIn'
+                        ? 'Sign in'
+                        : authMode === 'signUp'
+                          ? 'Create account'
+                          : authMode === 'resetRequest'
+                            ? 'Send reset code'
+                            : 'Set new password'}
                     </Text>
                   )}
                 </Pressable>
+                {authMode === 'signIn' ? (
+                  <Pressable
+                    onPress={() => switchMode('resetRequest')}
+                    accessibilityRole="button">
+                    <Text style={[styles.toggleText, { color: colors.textSecondary }]}>
+                      Forgot password?
+                    </Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
-                  onPress={() => {
-                    setAuthMode(authMode === 'signIn' ? 'signUp' : 'signIn');
-                    setNotice('');
-                  }}
+                  onPress={() =>
+                    switchMode(authMode === 'signIn' ? 'signUp' : 'signIn')
+                  }
                   accessibilityRole="button">
                   <Text style={[styles.toggleText, { color: colors.textSecondary }]}>
                     {authMode === 'signIn'
                       ? 'No account? Create one'
-                      : 'Already have an account? Sign in'}
+                      : authMode === 'signUp'
+                        ? 'Already have an account? Sign in'
+                        : 'Back to sign in'}
                   </Text>
                 </Pressable>
                 {notice ? (
@@ -483,13 +577,41 @@ export default function Account() {
           </Pressable>
         </View>
 
-        <Pressable
-          onPress={() => router.push('/privacy')}
-          accessibilityRole="button"
-          style={styles.privacyRow}>
-          <Text style={[styles.subRowLabel, { color: colors.text }]}>Privacy</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-        </Pressable>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>More</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <Pressable
+            onPress={() => router.push('/privacy')}
+            accessibilityRole="button"
+            style={[styles.subRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.subRowLabel, { color: colors.text }]}>Privacy</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          </Pressable>
+        </View>
+
+        {/* ── Account management — destructive actions live at the very bottom,
+            clearly separated from everything above (signed in only) ────────── */}
+        {account ? (
+          <View style={styles.accountActions}>
+            <Pressable
+              onPress={signOut}
+              disabled={busy}
+              accessibilityRole="button"
+              style={[
+                styles.secondaryBtn,
+                { borderColor: colors.border, opacity: busy ? 0.6 : 1 },
+              ]}>
+              <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Sign out</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={confirmDeleteAccount}
+              disabled={busy}
+              accessibilityRole="button"
+              style={styles.deleteRow}>
+              <Text style={[styles.deleteText, { color: colors.error }]}>Delete account…</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -582,11 +704,5 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   subRowLabel: { fontSize: FontSize.body, fontWeight: '500', flexShrink: 1 },
-  privacyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.md,
-    gap: Spacing.md,
-  },
+  accountActions: { marginTop: Spacing.xl },
 });

@@ -26,7 +26,7 @@
     },
     "android": {
       "package": "com.denny32.parlez",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -52,15 +52,15 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/icon.png",
-          "imageWidth": 120,
+          "image": "./assets/images/splash-logo.png",
+          "imageWidth": 140,
           "backgroundColor": "#FBF9F6",
           "dark": {
             "backgroundColor": "#15130F"
           },
           "android": {
-            "image": "./assets/images/icon.png",
-            "imageWidth": 120
+            "image": "./assets/images/splash-logo.png",
+            "imageWidth": 140
           }
         }
       ],

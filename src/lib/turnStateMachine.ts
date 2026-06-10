@@ -59,7 +59,7 @@ import {
 import type { SynthesizedSpeech } from '@/lib/services';
 import { useAppStore } from '@/stores/appStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
-import type { TurnContext, TurnResponse } from '@/lib/types';
+import type { Message, TurnContext, TurnResponse } from '@/lib/types';
 
 const POLL_MS = 150;
 /** Safety net: if `end` never arrives after a stop, finish the turn anyway. */
@@ -392,6 +392,16 @@ export function useTurnEngine(online: boolean): TurnEngine {
     /** The user stayed silent — Marie gives a gentle nudge (spec §6.3). */
     const onSilence = async () => {
       if (!alive || !listening()) return;
+      // After two unanswered nudges (gentle, then simpler) the user is clearly
+      // away. Rather than keep a hot mic open and re-prompt forever, pause the
+      // conversation back to idle and invite them to tap when they're ready.
+      // silenceRound only climbs across *consecutive* silent rounds —
+      // markVoice() resets it the moment the user speaks.
+      if (silenceRound >= 2) {
+        turnOff();
+        store().setErrorNotice('Paused. Tap the mic whenever you’re ready to keep going.');
+        return;
+      }
       const simpler = silenceRound >= 1;
       silenceRound += 1;
       awaitingEnd = false;
@@ -441,6 +451,25 @@ export function useTurnEngine(online: boolean): TurnEngine {
         return;
       }
 
+      // Optimistic echo: show the user's turn in the transcript immediately
+      // (faint, like a messaging app) so it doesn't vanish during the STT/AI
+      // round-trip. We render the on-device transcript now; the server's
+      // (Whisper) transcript reconciles it below. With state already
+      // 'processing', the ThinkingIndicator footer shows directly beneath it.
+      const optimisticText = (input.text ?? '').trim();
+      let optimisticMsg: Message | null = null;
+      if (optimisticText) {
+        optimisticMsg = store().addMessage({
+          speaker: 'user',
+          text: optimisticText,
+          pending: true,
+        });
+      }
+      /** Un-faint the echoed bubble so it never stays stuck in the pending look. */
+      const settleOptimistic = () => {
+        if (optimisticMsg) store().updateMessage(optimisticMsg.id, { pending: false });
+      };
+
       // One automatic retry after 3s on failure (spec §10.2).
       let response: TurnResponse | null = null;
       let capHit = false;
@@ -475,6 +504,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       if (notEntitled) {
         // Re-pull RevenueCat truth (flips the gate live) and send the user to the
         // paywall rather than apologising for a server error.
+        settleOptimistic();
         void useSubscriptionStore.getState().refresh();
         store().setTurnState('idle');
         router.replace('/paywall' as never);
@@ -482,6 +512,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       }
 
       if (capHit) {
+        settleOptimistic();
         store().setTurnState('idle');
         return;
       }
@@ -496,6 +527,9 @@ export function useTurnEngine(online: boolean): TurnEngine {
             ? `${voiceName(store().settings.voice)} couldn’t respond just now. Please try again in a moment.`
             : 'You’re offline — reconnect and try again.',
         );
+        // Keep the user's echoed turn on screen (don't drop their words) while
+        // Camille apologises.
+        settleOptimistic();
         await speak({
           transcript: '',
           speechText: AI_ERROR_SPEECH,
@@ -507,6 +541,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       }
 
       // STT miss: audio was sent but nothing was transcribed — Marie says so too (spec §10.2).
+      // (Only reachable with no device transcript, so there's no optimistic echo to settle.)
       if (input.audioUri && !input.text && !response.transcript) {
         store().setErrorNotice('I didn’t catch that — try again?');
         await speak({
@@ -519,11 +554,20 @@ export function useTurnEngine(online: boolean): TurnEngine {
         return;
       }
 
-      if (response.transcript) {
-        const userMsg = store().addMessage({
-          speaker: 'user',
-          text: response.transcript,
-        });
+      // Reconcile the user's turn into the transcript. Prefer the server's
+      // (Whisper) transcript; if it came back empty but we have a device
+      // transcript, keep that rather than dropping the user's words.
+      const finalUserText = response.transcript || optimisticText;
+      if (finalUserText) {
+        let userMsg: Message;
+        if (optimisticMsg) {
+          // Replace the optimistic echo in place — no new bubble, no flicker.
+          store().updateMessage(optimisticMsg.id, { text: finalUserText, pending: false });
+          userMsg = { ...optimisticMsg, text: finalUserText, pending: false };
+        } else {
+          // Audio-only turn (no device transcript) — add the bubble now.
+          userMsg = store().addMessage({ speaker: 'user', text: finalUserText });
+        }
         void saveMessage(userMsg);
         // First real user reply this session — tick the streak (calendar-day,
         // local). Fire-and-forget, never blocks the conversation.
