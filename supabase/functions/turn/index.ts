@@ -74,7 +74,8 @@ function normalizeContext(raw: unknown): PromptContext {
  * A short French biasing hint for Whisper: the partner's name, the learner's
  * name (when known), plus the last couple of turns. Nudges the model toward
  * the conversation's vocabulary and spelling, improving accuracy on names and
- * recently-used words (spec §6.1).
+ * recently-used words (spec §6.1). The code-switch line keeps English words a
+ * learner drops in from being force-respelled as French.
  */
 function transcriptionPrompt(ctx: PromptContext): string {
   const recent = ctx.history
@@ -85,7 +86,12 @@ function transcriptionPrompt(ctx: PromptContext): string {
   const learnerHint = ctx.learnerName?.trim()
     ? `L'apprenant s'appelle ${ctx.learnerName.trim()}.`
     : '';
-  return [`Conversation en français avec ${ctx.personaName}.`, learnerHint, recent]
+  return [
+    `Conversation en français avec ${ctx.personaName}.`,
+    `L'apprenant est anglophone et mélange parfois des mots ou phrases en anglais ; transcrire l'anglais tel quel, sans le franciser.`,
+    learnerHint,
+    recent,
+  ]
     .filter(Boolean)
     .join(' ')
     .slice(0, 900);

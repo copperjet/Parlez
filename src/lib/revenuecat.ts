@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase';
 const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY ?? '';
 const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY ?? '';
 const KV_ANON_ID = 'rc_anon_id';
+const KV_AUTO_RESTORE = 'rc_auto_restore_done';
 const CACHE_KEY = 'rc_cache_v1';
 
 export interface CachedEntitlement {
@@ -165,6 +166,19 @@ export async function clearCachedEntitlement(): Promise<void> {
     // best-effort
   }
   await writeKv(KV_ANON_ID, '');
+}
+
+/**
+ * One-shot silent restore guard. After a reinstall the anon ID is regenerated,
+ * so a paying user looks Free until `restorePurchases()` re-syncs the store
+ * receipt — the flag limits that automatic sync to once per install.
+ */
+export async function hasAutoRestored(): Promise<boolean> {
+  return (await readKv(KV_AUTO_RESTORE)) === 'true';
+}
+
+export async function markAutoRestored(): Promise<void> {
+  await writeKv(KV_AUTO_RESTORE, 'true');
 }
 
 /**

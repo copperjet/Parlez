@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MARIE_VOICES, voiceName, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
@@ -18,11 +17,6 @@ import type { Settings as AppSettings } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
 import { useAuthStore } from '@/stores/authStore';
 import { planSummary, useSubscriptionStore } from '@/stores/subscriptionStore';
-
-const PLAY_SUB_URL =
-  'https://play.google.com/store/account/subscriptions?package=com.denny32.parlez';
-const IOS_SUB_URL = 'https://apps.apple.com/account/subscriptions';
-const SUB_URL = Platform.OS === 'ios' ? IOS_SUB_URL : PLAY_SUB_URL;
 
 const SPEEDS: { id: SpeechSpeed; label: string }[] = [
   { id: 'slow', label: 'Slow' },
@@ -97,30 +91,19 @@ export default function Settings() {
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isTrialing = useSubscriptionStore((s) => s.isTrialing);
   const tier = useSubscriptionStore((s) => s.tier);
-  const restore = useSubscriptionStore((s) => s.restore);
 
   const isSignedIn = useAuthStore((s) => s.isSignedIn);
   const email = useAuthStore((s) => s.email);
 
   // Right-side label for the Account row: reacts live to sign-in and plan.
-  const accountStatus = !isSignedIn
-    ? 'Sign in to sync'
-    : isPremium
-      ? planSummary({ isPremium, isTrialing, tier })
+  // Premium shows the plan even when signed out — subscription management
+  // lives in Account, and entitlement doesn't require sign-in.
+  const accountStatus = isPremium
+    ? planSummary({ isPremium, isTrialing, tier })
+    : !isSignedIn
+      ? 'Sign in to sync'
       : (email ?? 'Synced');
 
-  const onManageSub = () => {
-    void WebBrowser.openBrowserAsync(SUB_URL);
-  };
-  const onRestore = async () => {
-    const ok = await restore();
-    Alert.alert(
-      ok ? 'Subscription restored' : 'No purchases found',
-      ok
-        ? 'Welcome back.'
-        : `We couldn't find an active subscription on this ${Platform.OS === 'ios' ? 'Apple' : 'Google'} account.`,
-    );
-  };
   const onUpgrade = () => {
     router.push('/paywall' as never);
   };
@@ -233,28 +216,7 @@ export default function Settings() {
           </View>
         </Pressable>
 
-        <Pressable
-          onPress={() => router.push('/privacy')}
-          accessibilityRole="button"
-          style={[styles.linkRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.rowLabel, { color: colors.text }]}>Privacy</Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-        </Pressable>
-
-        {isPremium || isTrialing ? (
-          <Pressable
-            onPress={onManageSub}
-            accessibilityRole="button"
-            style={[styles.linkRow, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Manage subscription</Text>
-            <View style={styles.linkRight}>
-              <Text style={{ color: colors.textSecondary, fontSize: FontSize.caption }}>
-                {isTrialing ? 'Free trial' : 'Active'}
-              </Text>
-              <Ionicons name="open-outline" size={18} color={colors.textFaint} />
-            </View>
-          </Pressable>
-        ) : (
+        {!isPremium && !isTrialing ? (
           <Pressable
             onPress={onUpgrade}
             accessibilityRole="button"
@@ -262,15 +224,7 @@ export default function Settings() {
             <Text style={[styles.rowLabel, { color: colors.accent }]}>Upgrade to Parlez Premium</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.accent} />
           </Pressable>
-        )}
-
-        <Pressable
-          onPress={onRestore}
-          accessibilityRole="button"
-          style={[styles.linkRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.rowLabel, { color: colors.text }]}>Restore purchases</Text>
-          <Ionicons name="refresh" size={18} color={colors.textFaint} />
-        </Pressable>
+        ) : null}
 
         <Pressable
           onPress={confirmClear}

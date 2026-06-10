@@ -31,6 +31,12 @@ const light = {
   error: '#C2483B',
   success: '#3E8E5A',
 
+  // Recoverable in-conversation notices (mic hiccup, STT miss) — a gentle
+  // heads-up, deliberately softer than `error`.
+  warningBg: '#FBF0DC',
+  warningBorder: '#E8D9A8',
+  warningText: '#7A5B22',
+
   waveform: '#5B6CB8',
   waveformMuted: '#CFCABF',
   scrim: 'rgba(0,0,0,0.35)',
@@ -61,6 +67,10 @@ const dark: typeof light = {
   border: '#332E26',
   error: '#E5736A',
   success: '#5FB07E',
+
+  warningBg: '#2C2718',
+  warningBorder: '#4A4126',
+  warningText: '#D9A94A',
 
   waveform: '#8A98D8',
   waveformMuted: '#3A352D',

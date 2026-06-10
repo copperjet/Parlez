@@ -16,7 +16,14 @@ export const SILENCE_PROMPT_MS = 4000;
 export const SILENCE_CONTINUE_MS = 8000;
 
 /** Silence that auto-stops recording, once the user has actually spoken (spec §6.1). */
-export const SILENCE_STOP_MS = 1500;
+export const SILENCE_STOP_MS = 2000;
+
+/**
+ * Extended silence window when the transcript looks unfinished (trailing comma,
+ * conjunction, or filler) — gives learners room to think mid-sentence without
+ * the turn ending under them.
+ */
+export const SILENCE_STOP_UNFINISHED_MS = 4000;
 
 /** Minimum speech needed before silence-stop can trigger (spec §6.1). */
 export const MIN_SPEECH_MS = 500;

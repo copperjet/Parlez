@@ -21,7 +21,9 @@ import Purchases, {
 import {
   clearCachedEntitlement,
   getCachedEntitlement,
+  hasAutoRestored,
   isConfigured,
+  markAutoRestored,
   writeCachedEntitlement,
 } from '@/lib/revenuecat';
 
@@ -209,6 +211,20 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
         loading: false,
         ready: true,
       });
+      // Reinstall recovery (once per install): a fresh anonymous ID has no
+      // entitlement even if the store account has an active subscription —
+      // silently re-sync the receipt so paying users never see the paywall.
+      // iOS may show one App Store sign-in prompt; accepted trade-off.
+      if (!get().isPremium && !(await hasAutoRestored())) {
+        try {
+          const restored = await Purchases.restorePurchases();
+          get().applyCustomerInfo(restored);
+        } catch {
+          // Best-effort — the manual refresh in Account remains the fallback.
+        } finally {
+          await markAutoRestored();
+        }
+      }
     } catch (e) {
       set({
         loading: false,

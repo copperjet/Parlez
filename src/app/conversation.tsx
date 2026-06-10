@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -103,17 +103,21 @@ function ConversationSession() {
   const waveMode = useMemo(() => waveformModeFor(turnState), [turnState]);
 
   // Android: pressing back during a conversation confirms first (spec §9.2).
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      Alert.alert('End conversation?', `${personaName} will be here when you come back.`, [
-        { text: 'Stay', style: 'cancel' },
-        { text: 'End', style: 'destructive', onPress: () => BackHandler.exitApp() },
-      ]);
-      return true;
-    });
-    return () => sub.remove();
-  }, [personaName]);
+  // Focus-scoped: when a modal (settings/account/…) is on top this screen is
+  // unfocused, so back there pops the modal instead of prompting to end.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') return;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        Alert.alert('End conversation?', `${personaName} will be here when you come back.`, [
+          { text: 'Stay', style: 'cancel' },
+          { text: 'End', style: 'destructive', onPress: () => BackHandler.exitApp() },
+        ]);
+        return true;
+      });
+      return () => sub.remove();
+    }, [personaName]),
+  );
 
   const sendDraft = () => {
     const text = draft.trim();
@@ -142,16 +146,16 @@ function ConversationSession() {
           style={[
             styles.banner,
             {
-              backgroundColor: bannerIsError ? colors.error : colors.accentSoft,
-              borderBottomColor: bannerIsError ? colors.error : colors.accent,
+              backgroundColor: bannerIsError ? colors.warningBg : colors.accentSoft,
+              borderBottomColor: bannerIsError ? colors.warningBorder : colors.accent,
             },
           ]}>
           <Text
             style={[
               styles.bannerText,
               {
-                color: bannerIsError ? colors.onAccent : colors.accent,
-                fontWeight: bannerIsError ? '500' : '600',
+                color: bannerIsError ? colors.warningText : colors.accent,
+                fontWeight: '600',
               },
             ]}>
             {banner}

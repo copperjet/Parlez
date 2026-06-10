@@ -53,6 +53,7 @@ import {
   SILENCE_CONTINUE_MS,
   SILENCE_PROMPT_MS,
   SILENCE_STOP_MS,
+  SILENCE_STOP_UNFINISHED_MS,
   voiceName,
 } from '@/lib/constants';
 import type { SynthesizedSpeech } from '@/lib/services';
@@ -104,6 +105,31 @@ export interface TurnEngine {
  * `error` event (W3C SpeechRecognition error codes); we only special-case the
  * ones a learner can act on, and otherwise keep the gentle "didn't hear" copy.
  */
+/**
+ * Words that signal the learner is mid-thought — give them the longer silence
+ * window rather than cutting the turn. French + English (code-switching is
+ * normal for learners), plus hesitation fillers.
+ */
+const CONTINUATION_CUES = new Set([
+  'et', 'mais', 'ou', 'donc', 'alors', 'puis', 'que', 'de', 'à', 'parce',
+  'euh', 'um', 'uh', 'and', 'but', 'so', 'or', 'because',
+]);
+
+/**
+ * Heuristic: does the live transcript look like an unfinished sentence?
+ * Trailing comma, conjunction, or filler → wait longer before auto-stopping.
+ * Interim transcripts rarely carry final punctuation, so the default stays the
+ * short window; this only extends genuinely dangling speech.
+ */
+export function looksUnfinished(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  if (t.endsWith(',')) return true;
+  if (/[.!?…]$/.test(t)) return false;
+  const lastWord = t.split(/\s+/).pop()?.replace(/[«»"'’,;:]/g, '') ?? '';
+  return CONTINUATION_CUES.has(lastWord);
+}
+
 function micFailureNotice(code: string | null, online: boolean): string {
   if (code === 'not-allowed' || code === 'service-not-allowed') {
     return 'Microphone access is off — turn it on in Settings.';
@@ -143,6 +169,14 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let lastVoiceAt = 0;
     let silenceRound = 0;
     let latestTranscript = '';
+    /**
+     * Finalized segments accumulated across pauses. Android's continuous
+     * recognizer finalizes a segment after each pause and starts the next one
+     * empty — without this buffer, "Bonjour" would be erased by "ça va ?".
+     * On iOS the interim transcript is cumulative and a single final arrives at
+     * stop, so this stays empty until the end (same behaviour as before).
+     */
+    let committedTranscript = '';
     let recognitionUri: string | null = null;
     /** Tick streak once per session, only after a real user reply. */
     let streakTickedThisSession = false;
@@ -584,7 +618,10 @@ export function useTurnEngine(online: boolean): TurnEngine {
     const pollTick = () => {
       if (!alive || !listening() || speechStartAt == null) return;
       const now = Date.now();
-      if (now - speechStartAt >= MIN_SPEECH_MS && now - lastVoiceAt >= SILENCE_STOP_MS) {
+      const stopWindow = looksUnfinished(latestTranscript)
+        ? SILENCE_STOP_UNFINISHED_MS
+        : SILENCE_STOP_MS;
+      if (now - speechStartAt >= MIN_SPEECH_MS && now - lastVoiceAt >= stopWindow) {
         requestFinish(false);
       }
     };
@@ -596,6 +633,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       speechStartAt = null;
       lastVoiceAt = Date.now();
       latestTranscript = '';
+      committedTranscript = '';
       recognitionUri = null;
       manualStop = false;
       lastRecognizerError = null;
@@ -659,10 +697,12 @@ export function useTurnEngine(online: boolean): TurnEngine {
     unsubscribe = subscribeRecognition({
       result: (e) => {
         if (!alive || !listening()) return;
-        const t = e.results?.[0]?.transcript ?? '';
+        const t = (e.results?.[0]?.transcript ?? '').trim();
         if (t) {
-          latestTranscript = t;
-          store().setLiveTranscript(t);
+          const joined = committedTranscript ? `${committedTranscript} ${t}` : t;
+          if (e.isFinal) committedTranscript = joined;
+          latestTranscript = joined;
+          store().setLiveTranscript(joined);
           markVoice();
         }
       },

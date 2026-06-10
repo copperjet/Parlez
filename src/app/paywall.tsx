@@ -7,9 +7,9 @@
  * never hardcoded, so localisation + regional pricing Just Work.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -32,7 +32,10 @@ type TierId = 'monthly' | 'annual' | 'lifetime';
 const TERMS_URL = 'https://codarti.com/parlez/terms';
 const PRIVACY_URL = 'https://codarti.com/parlez/privacy';
 
-/** Outcome guarantee shown under the CTA on every tier (spec: speak-or-refund). */
+/**
+ * Outcome guarantee shown under the CTA (spec: speak-or-refund). Annual and
+ * Lifetime only — a 30-day guarantee on a ~30-day monthly term is a free month.
+ */
 const GUARANTEE =
   '30-day money-back guarantee. Do 10 minutes a day. If you can’t hold a basic conversation, we refund everything — no questions.';
 
@@ -104,12 +107,15 @@ export default function Paywall() {
     }
   }, [isPremium, isTrialing, router]);
 
-  // Hard-gate: swallow Android back so users can't slip past.
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
-    return () => sub.remove();
-  }, []);
+  // Hard-gate: swallow Android back so users can't slip past. Focus-scoped so
+  // the gate doesn't leak to screens stacked on top of the paywall.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') return;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+      return () => sub.remove();
+    }, []),
+  );
 
   const selectedPkg = tiers[selected] ?? null;
   const trial = freeTrial(selectedPkg);
@@ -247,10 +253,12 @@ export default function Paywall() {
           {trial
             ? `${trial.phrase} free, then ${selectedPkg?.product.priceString ?? ''}${
                 selected === 'annual' ? ' billed yearly' : ' billed monthly'
-              }, cancel anytime. ${GUARANTEE}`
+              }, cancel anytime.${selected === 'monthly' ? '' : ` ${GUARANTEE}`}`
             : selected === 'lifetime'
               ? `One payment. No subscription, no renewal. ${GUARANTEE}`
-              : GUARANTEE}
+              : selected === 'monthly'
+                ? 'Billed monthly, cancel anytime.'
+                : GUARANTEE}
         </Text>
 
         <Pressable onPress={() => refresh()} hitSlop={10} style={styles.refresh}>

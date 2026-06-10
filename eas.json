@@ -38,6 +38,7 @@
       }
     },
     "production": {
+      "credentialsSource": "local",
       "ios": {
         "resourceClass": "m-medium"
       },

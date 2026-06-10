@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -41,6 +42,11 @@ import {
 import { clearProfile } from '@/lib/db/profile';
 import { useAppStore } from '@/stores/appStore';
 import { planSummary, useSubscriptionStore } from '@/stores/subscriptionStore';
+
+const PLAY_SUB_URL =
+  'https://play.google.com/store/account/subscriptions?package=com.denny32.parlez';
+const IOS_SUB_URL = 'https://apps.apple.com/account/subscriptions';
+const SUB_URL = Platform.OS === 'ios' ? IOS_SUB_URL : PLAY_SUB_URL;
 
 interface AccountInfo {
   id: string;
@@ -82,6 +88,7 @@ export default function Account() {
   const isTrialing = useSubscriptionStore((s) => s.isTrialing);
   const tier = useSubscriptionStore((s) => s.tier);
   const streakCount = useAppStore((s) => s.streakCount);
+  const [subBusy, setSubBusy] = useState(false);
 
   // Android email/password form state
   const [email, setEmail] = useState('');
@@ -253,6 +260,39 @@ export default function Account() {
     );
   };
 
+  // ── Subscription (works signed-in or anonymous — entitlement is RevenueCat's,
+  // keyed to the device's store account, independent of Supabase auth) ─────────
+
+  const onManageSub = () => {
+    void WebBrowser.openBrowserAsync(SUB_URL);
+  };
+
+  const onUpgrade = () => {
+    router.push('/paywall' as never);
+  };
+
+  /** Re-check entitlement; if still not premium, sync the store receipt. */
+  const onRefreshSub = async () => {
+    if (subBusy) return;
+    setSubBusy(true);
+    try {
+      const sub = useSubscriptionStore.getState();
+      await sub.refresh();
+      if (!useSubscriptionStore.getState().isPremium) {
+        await sub.restore();
+      }
+      const now = useSubscriptionStore.getState();
+      Alert.alert(
+        now.isPremium ? 'Subscription active' : 'No subscription found',
+        now.isPremium
+          ? planSummary({ isPremium: now.isPremium, isTrialing: now.isTrialing, tier: now.tier })
+          : `We couldn't find an active subscription on this ${Platform.OS === 'ios' ? 'Apple' : 'Google'} account.`,
+      );
+    } finally {
+      setSubBusy(false);
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -283,7 +323,6 @@ export default function Account() {
           <>
             <View style={[styles.card, { backgroundColor: colors.surface }]}>
               <InfoRow label="Email" value={account.email ?? 'Hidden by Apple'} />
-              <InfoRow label="Plan" value={planSummary({ isPremium, isTrialing, tier })} />
               <InfoRow
                 label="Streak"
                 value={streakCount > 0 ? `Day ${streakCount}` : 'Not started yet'}
@@ -401,6 +440,56 @@ export default function Account() {
             )}
           </>
         )}
+
+        {/* ── Subscription — entitlement is device/store-scoped, so this section
+            renders signed-in or not ─────────────────────────────────────────── */}
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Subscription</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <InfoRow label="Plan" value={planSummary({ isPremium, isTrialing, tier })} />
+
+          {isPremium || isTrialing ? (
+            <Pressable
+              onPress={onManageSub}
+              accessibilityRole="button"
+              style={[styles.subRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.subRowLabel, { color: colors.text }]}>Manage subscription</Text>
+              <Ionicons name="open-outline" size={18} color={colors.textFaint} />
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={onUpgrade}
+              accessibilityRole="button"
+              style={[styles.subRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.subRowLabel, { color: colors.accent }]}>
+                Upgrade to Parlez Premium
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.accent} />
+            </Pressable>
+          )}
+
+          <Pressable
+            onPress={() => void onRefreshSub()}
+            disabled={subBusy}
+            accessibilityRole="button"
+            style={[styles.subRow, { borderBottomColor: colors.border, opacity: subBusy ? 0.6 : 1 }]}>
+            <Text style={[styles.subRowLabel, { color: colors.text }]}>
+              Refresh subscription status
+            </Text>
+            {subBusy ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <Ionicons name="refresh" size={18} color={colors.textFaint} />
+            )}
+          </Pressable>
+        </View>
+
+        <Pressable
+          onPress={() => router.push('/privacy')}
+          accessibilityRole="button"
+          style={styles.privacyRow}>
+          <Text style={[styles.subRowLabel, { color: colors.text }]}>Privacy</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
       </ScrollView>
     </View>
   );
@@ -475,5 +564,29 @@ const styles = StyleSheet.create({
     fontSize: FontSize.caption,
     textAlign: 'center',
     lineHeight: FontSize.caption * 1.4,
+  },
+  sectionTitle: {
+    fontSize: FontSize.caption,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: Spacing.lg,
+  },
+  subRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.md,
+  },
+  subRowLabel: { fontSize: FontSize.body, fontWeight: '500', flexShrink: 1 },
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
   },
 });
