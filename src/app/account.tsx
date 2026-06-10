@@ -91,7 +91,7 @@ export default function Account() {
   const [subBusy, setSubBusy] = useState(false);
 
   // Android email/password form state
-  type AuthMode = 'signIn' | 'signUp' | 'resetRequest' | 'resetVerify';
+  type AuthMode = 'signIn' | 'signUp' | 'resetRequest' | 'resetVerify' | 'confirmVerify';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('signIn');
@@ -178,8 +178,12 @@ export default function Account() {
       if (authMode === 'signUp') {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) { setNotice(error.message); return; }
-        setNotice('Account created. Check your email to confirm, then sign in.');
-        setAuthMode('signIn');
+        // Email confirmation is OTP-based (in-app), not a magic link — Supabase
+        // emails a 6-digit code (the Confirm signup template must include
+        // {{ .Token }}). Collect it next; verifyOtp signs the user straight in.
+        setOtpCode('');
+        setAuthMode('confirmVerify');
+        setNotice('Confirmation code sent — check your email.');
         return;
       }
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -240,6 +244,37 @@ export default function Account() {
       }
       switchMode('signIn');
       setNotice('Password updated.');
+    } catch {
+      setNotice('Something went wrong. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Android: confirm email (OTP) ────────────────────────────────────────────
+  // verifyOtp(type:'signup') both confirms the address and establishes a session,
+  // so the user lands signed-in — no separate sign-in step.
+
+  const submitConfirm = async () => {
+    if (!supabase || busy) return;
+    const addr = email.trim();
+    const token = otpCode.trim();
+    if (!token) { setNotice('Enter the code from the email.'); return; }
+    setBusy(true);
+    setNotice('');
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: addr,
+        token,
+        type: 'signup',
+      });
+      if (error) { setNotice(error.message); return; }
+      if (data.user) {
+        await onSignIn(data.user.id);
+        await reload();
+      }
+      switchMode('signIn');
+      setNotice('Email confirmed — you’re signed in.');
     } catch {
       setNotice('Something went wrong. Try again.');
     } finally {
@@ -401,7 +436,7 @@ export default function Account() {
                 Sync your progress
               </Text>
               <Text style={[styles.explainerBody, { color: colors.textSecondary }]}>
-                Sign in to back up your level, vocabulary patterns, and streak — and pick up where you left off after a reinstall or on a new device.
+                Sign in to back up your progress and pick up on any device.
               </Text>
             </View>
 
@@ -450,32 +485,32 @@ export default function Account() {
                     ]}
                   />
                 ) : null}
+                {authMode === 'resetVerify' || authMode === 'confirmVerify' ? (
+                  <TextInput
+                    value={otpCode}
+                    onChangeText={setOtpCode}
+                    placeholder="Code from the email"
+                    placeholderTextColor={colors.textFaint}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                    style={[
+                      styles.input,
+                      { backgroundColor: colors.surface, color: colors.text },
+                    ]}
+                  />
+                ) : null}
                 {authMode === 'resetVerify' ? (
-                  <>
-                    <TextInput
-                      value={otpCode}
-                      onChangeText={setOtpCode}
-                      placeholder="6-digit code from the email"
-                      placeholderTextColor={colors.textFaint}
-                      keyboardType="number-pad"
-                      maxLength={6}
-                      style={[
-                        styles.input,
-                        { backgroundColor: colors.surface, color: colors.text },
-                      ]}
-                    />
-                    <TextInput
-                      value={newPassword}
-                      onChangeText={setNewPassword}
-                      placeholder="New password"
-                      placeholderTextColor={colors.textFaint}
-                      secureTextEntry
-                      style={[
-                        styles.input,
-                        { backgroundColor: colors.surface, color: colors.text },
-                      ]}
-                    />
-                  </>
+                  <TextInput
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    placeholder="New password"
+                    placeholderTextColor={colors.textFaint}
+                    secureTextEntry
+                    style={[
+                      styles.input,
+                      { backgroundColor: colors.surface, color: colors.text },
+                    ]}
+                  />
                 ) : null}
                 <Pressable
                   onPress={
@@ -483,7 +518,9 @@ export default function Account() {
                       ? requestReset
                       : authMode === 'resetVerify'
                         ? submitReset
-                        : submitEmailAuth
+                        : authMode === 'confirmVerify'
+                          ? submitConfirm
+                          : submitEmailAuth
                   }
                   disabled={busy}
                   accessibilityRole="button"
@@ -501,7 +538,9 @@ export default function Account() {
                           ? 'Create account'
                           : authMode === 'resetRequest'
                             ? 'Send reset code'
-                            : 'Set new password'}
+                            : authMode === 'confirmVerify'
+                              ? 'Confirm email'
+                              : 'Set new password'}
                     </Text>
                   )}
                 </Pressable>
@@ -535,8 +574,11 @@ export default function Account() {
           </>
         )}
 
-        {/* ── Subscription — entitlement is device/store-scoped, so this section
-            renders signed-in or not ─────────────────────────────────────────── */}
+        {/* ── Subscription + More — kept out of the signed-out sign-in flow so
+            that screen stays clean (just the tagline + form). Shown once the
+            user is signed in; upgrade/restore stay reachable via the paywall. */}
+        {account ? (
+        <>
         <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Subscription</Text>
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
           <InfoRow label="Plan" value={planSummary({ isPremium, isTrialing, tier })} />
@@ -587,6 +629,8 @@ export default function Account() {
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
           </Pressable>
         </View>
+        </>
+        ) : null}
 
         {/* ── Account management — destructive actions live at the very bottom,
             clearly separated from everything above (signed in only) ────────── */}

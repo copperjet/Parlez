@@ -78,8 +78,12 @@ async function getAnonId(): Promise<string> {
 async function resolveAppUserId(): Promise<string> {
   if (supabase) {
     try {
-      const { data } = await supabase.auth.getUser();
-      if (data.user?.id) return data.user.id;
+      // Read the locally-persisted session — NOT getUser(), which does a server
+      // round-trip and, on a cold/slow start, can momentarily resolve null and
+      // drop us to the anonymous id. A flapping app-user-id makes RevenueCat see
+      // a fresh (entitlement-less) user and bounces paying users to the paywall.
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user?.id) return data.session.user.id;
     } catch {
       // fall through to anon id
     }

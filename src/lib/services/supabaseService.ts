@@ -17,6 +17,14 @@ import type { ConversationService, SynthesizedSpeech, TurnInput } from './conver
 
 type TurnMode = 'open' | 'reply' | 'silence';
 
+/**
+ * Hard ceiling on a single /turn request. Without it, a hung connection never
+ * rejects and the UI sticks on the thinking indicator (•••) forever — notably
+ * the opening turn after the app's been backgrounded. On timeout the fetch
+ * aborts and the turn engine runs its normal error path (retry-once / idle).
+ */
+const TURN_TIMEOUT_MS = 20000;
+
 /** Sentinel error thrown when the server returns a 402 daily-cap response. */
 export class DailyCapError extends Error {
   constructor(
@@ -153,11 +161,19 @@ async function callTurn(
   }
 
   const headers = await authHeaders();
-  const res = await fetch(`${functionsBase()}/turn`, {
-    method: 'POST',
-    headers,
-    body: form,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${functionsBase()}/turn`, {
+      method: 'POST',
+      headers,
+      body: form,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (res.status === 403) {
     // Server says the caller isn't entitled — cached entitlement is stale.
     throw new NotEntitledError();

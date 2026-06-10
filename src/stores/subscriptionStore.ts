@@ -201,21 +201,43 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
           get().applyCustomerInfo(info);
         });
       }
+      // Snapshot the cached/hydrated truth BEFORE we touch it, so we can tell a
+      // genuine downgrade from a transient empty customerInfo.
+      const cachedPremium = get().isPremium;
       const [info, offers] = await Promise.all([
         Purchases.getCustomerInfo(),
         Purchases.getOfferings(),
       ]);
-      get().applyCustomerInfo(info);
-      set({
-        offerings: offers.current ?? null,
-        loading: false,
-        ready: true,
-      });
+      set({ offerings: offers.current ?? null });
+
+      // Self-heal: if the cache said premium but this fetch reports nothing, do
+      // NOT downgrade on faith — a flapping app-user-id or a slow store handoff
+      // momentarily returns an empty customerInfo and would bounce a paying user
+      // to the paywall on every return. Re-sync the store receipt first and
+      // commit whichever result actually grants the entitlement. Peeking the
+      // result (readEntitlement) before applyCustomerInfo avoids a paywall flash.
+      if (cachedPremium && !readEntitlement(info).isPremium) {
+        try {
+          const restored = await Purchases.restorePurchases();
+          get().applyCustomerInfo(
+            readEntitlement(restored).isPremium ? restored : info,
+          );
+        } catch {
+          // Receipt re-sync failed (offline, store hiccup) — keep the cached
+          // entitlement rather than punishing a paying user for a transient gap.
+        }
+      } else {
+        get().applyCustomerInfo(info);
+      }
+      set({ loading: false, ready: true });
+
       // Reinstall recovery (once per install): a fresh anonymous ID has no
       // entitlement even if the store account has an active subscription —
       // silently re-sync the receipt so paying users never see the paywall.
-      // iOS may show one App Store sign-in prompt; accepted trade-off.
-      if (!get().isPremium && !(await hasAutoRestored())) {
+      // iOS may show one App Store sign-in prompt; accepted trade-off. Only the
+      // never-cached-premium path needs this; the cached-premium case is already
+      // handled above on every refresh.
+      if (!get().isPremium && !cachedPremium && !(await hasAutoRestored())) {
         try {
           const restored = await Purchases.restorePurchases();
           get().applyCustomerInfo(restored);

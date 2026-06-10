@@ -730,6 +730,17 @@ export function useTurnEngine(online: boolean): TurnEngine {
       try {
         response = await store().service.openTurn(buildContext());
       } catch {
+        // openTurn failed (token expired after being away, entitlement still
+        // propagating right after a purchase, slow/hung server). Don't leave the
+        // state stuck on 'processing' — that's the permanently hung ••• bubble.
+        // Drop to idle with a gentle, tappable retry instead.
+        if (!alive) return;
+        store().setErrorNotice(
+          onlineRef.current
+            ? `${voiceName(store().settings.voice)} couldn’t start just now. Tap the mic to try again.`
+            : 'You’re offline — reconnect and tap the mic to start.',
+        );
+        store().setTurnState('idle');
         return;
       }
       if (!alive) return;
@@ -745,9 +756,16 @@ export function useTurnEngine(online: boolean): TurnEngine {
         if (t) {
           const joined = committedTranscript ? `${committedTranscript} ${t}` : t;
           if (e.isFinal) committedTranscript = joined;
+          // Only NEW speech (a longer transcript) counts as voice activity.
+          // Android's continuous recognizer re-emits the same hypothesis over
+          // and over; treating each re-emit as voice kept lastVoiceAt fresh
+          // forever, so the silence auto-stop (pollTick) never fired and the mic
+          // hung open after the user stopped talking. Volume-based markVoice
+          // (real mic energy) still runs independently for early speech onset.
+          const grew = joined.length > latestTranscript.length;
           latestTranscript = joined;
           store().setLiveTranscript(joined);
-          markVoice();
+          if (grew) markVoice();
         }
       },
       volumechange: (e) => {
@@ -789,9 +807,12 @@ export function useTurnEngine(online: boolean): TurnEngine {
         store().setErrorNotice(null);
         player.interrupt();
       } else if (p === 'recording') {
-        // The user has spoken (there's a live transcript) and tapped the stop
-        // glyph — finalize and SEND this turn now rather than discarding it.
-        // manualStop=true routes consumeRecognition straight to the server.
+        // The user has spoken and tapped the mic — "I'm done": SEND this turn
+        // now, then stop the live session. liveMode=false so speak()'s tail
+        // drops to idle (mic off) after Camille's reply instead of auto-
+        // continuing the listen loop. manualStop=true routes consumeRecognition
+        // straight to the server.
+        liveMode = false;
         requestFinish(true);
       } else if (p === 'listening') {
         // Mic on but no speech yet — tapping cancels (leave live mode, go idle).
