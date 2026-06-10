@@ -102,6 +102,7 @@ interface AppStore {
     text: string;
     corrections?: Message['corrections'];
     translation?: Message['translation'];
+    segments?: Message['segments'];
     pending?: boolean;
   }) => Message;
   updateMessage: (id: string, patch: Partial<Message>) => void;
@@ -174,6 +175,7 @@ export const useAppStore = create<AppStore>((set) => ({
       text: input.text,
       corrections: input.corrections,
       translation: input.translation,
+      segments: input.segments,
       pending: input.pending,
       createdAt: Date.now(),
     };

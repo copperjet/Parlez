@@ -11,7 +11,13 @@ import { ENV, functionsBase } from '@/lib/env';
 import { getCallerId } from '@/lib/revenuecat';
 import { supabase } from '@/lib/supabase';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
-import type { Correction, LevelSignal, TurnContext, TurnResponse } from '@/lib/types';
+import type {
+  Correction,
+  LevelSignal,
+  MessageSegment,
+  TurnContext,
+  TurnResponse,
+} from '@/lib/types';
 
 import type { ConversationService, SynthesizedSpeech, TurnInput } from './conversation';
 
@@ -108,10 +114,26 @@ function parseTurnResponse(raw: unknown): TurnResponse {
         .filter(Boolean)
         .slice(0, 8)
     : [];
+  const segments = Array.isArray(r.segments)
+    ? (r.segments as unknown[])
+        .map((s) => {
+          const seg = (s ?? {}) as Record<string, unknown>;
+          const text = typeof seg.text === 'string' ? seg.text.trim() : '';
+          if (!text) return null;
+          const label =
+            typeof seg.label === 'string' && seg.label.trim()
+              ? seg.label.trim()
+              : undefined;
+          return { label, text } as MessageSegment;
+        })
+        .filter((s): s is MessageSegment => s != null)
+        .slice(0, 6)
+    : undefined;
   return {
     transcript: typeof r.transcript === 'string' ? r.transcript : '',
     speechText: typeof r.speechText === 'string' ? r.speechText : '',
     translation: typeof r.translation === 'string' ? r.translation : undefined,
+    segments: segments && segments.length > 0 ? segments : undefined,
     corrections,
     profileNotes,
     levelSignal: (signal === 'up' || signal === 'down' ? signal : 'hold') as LevelSignal,

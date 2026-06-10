@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { voiceName } from '@/lib/constants';
-import type { Speaker } from '@/lib/types';
+import type { MessageSegment, Speaker } from '@/lib/types';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
 
@@ -12,10 +12,61 @@ interface SpeechBubbleProps {
   text: string;
   /** Optional one-line English translation, revealed when the bubble is tapped. */
   translation?: string;
+  /** Optional structured layout for a longer partner explanation. */
+  segments?: MessageSegment[];
   /** Faint rendering for live, not-yet-final transcription (spec §3.3). */
   faint?: boolean;
   /** Re-hear this message — only provided for partner bubbles. */
   onReplay?: () => void;
+}
+
+/** Drop surrounding «guillemets» for use as a plain heading. */
+function stripGuillemets(s: string): string {
+  return s.replace(/^[«»\s]+|[«»\s]+$/g, '');
+}
+
+/**
+ * Render text with «guillemet»-quoted French terms emphasised — Camille wraps
+ * the vocabulary/examples she references in guillemets, so highlighting them
+ * gives an otherwise-dense explanation visible structure. The guillemets
+ * themselves are dropped; the inner term is shown bold in the accent colour.
+ */
+function HighlightedText({
+  text,
+  color,
+  accent,
+  style,
+}: {
+  text: string;
+  color: string;
+  accent: string;
+  style: object[];
+}) {
+  const re = /«\s*([^«»]+?)\s*»/g;
+  const parts: { t: string; hl: boolean }[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ t: text.slice(last, m.index), hl: false });
+    parts.push({ t: m[1], hl: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ t: text.slice(last), hl: false });
+  if (parts.length === 0) parts.push({ t: text, hl: false });
+
+  return (
+    <Text style={[...style, { color }]}>
+      {parts.map((p, i) =>
+        p.hl ? (
+          <Text key={i} style={{ color: accent, fontWeight: '600' }}>
+            {p.t}
+          </Text>
+        ) : (
+          p.t
+        ),
+      )}
+    </Text>
+  );
 }
 
 /**
@@ -26,7 +77,14 @@ interface SpeechBubbleProps {
  * Partner bubbles stay French-first: tapping reveals a faint English translation
  * (when available), and a small replay button re-speaks the line.
  */
-export function SpeechBubble({ speaker, text, translation, faint, onReplay }: SpeechBubbleProps) {
+export function SpeechBubble({
+  speaker,
+  text,
+  translation,
+  segments,
+  faint,
+  onReplay,
+}: SpeechBubbleProps) {
   const { colors } = useTheme();
   const personaName = voiceName(useAppStore((s) => s.settings.voice));
   const isMarie = speaker === 'marie';
@@ -35,10 +93,34 @@ export function SpeechBubble({ speaker, text, translation, faint, onReplay }: Sp
   const bg = isMarie ? colors.marieBubble : colors.userBubble;
   const fg = isMarie ? colors.marieBubbleText : colors.userBubbleText;
   const canTranslate = isMarie && !!translation;
+  // Highlight vocabulary only on the partner's muted bubble — on the user's
+  // accent-coloured bubble the accent emphasis would be invisible.
+  const accent = isMarie ? colors.accent : fg;
+  const hasSegments = isMarie && !!segments && segments.length > 0;
 
   const bubbleInner = (
     <>
-      <Text style={[styles.text, { color: fg }]}>{text}</Text>
+      {hasSegments ? (
+        <View style={styles.segments}>
+          {segments!.map((seg, i) => (
+            <View key={i}>
+              {seg.label ? (
+                <Text style={[styles.segmentLabel, { color: accent }]}>
+                  {stripGuillemets(seg.label)}
+                </Text>
+              ) : null}
+              <HighlightedText
+                text={seg.text}
+                color={fg}
+                accent={accent}
+                style={[styles.text]}
+              />
+            </View>
+          ))}
+        </View>
+      ) : (
+        <HighlightedText text={text} color={fg} accent={accent} style={[styles.text]} />
+      )}
       {canTranslate && showTranslation ? (
         <Text style={[styles.translation, { color: fg }]}>{translation}</Text>
       ) : null}
@@ -109,6 +191,14 @@ const styles = StyleSheet.create({
     borderTopRightRadius: Radius.lg,
   },
   text: { fontSize: FontSize.bubble, lineHeight: FontSize.bubble * 1.4 },
+  segments: { gap: Spacing.sm },
+  segmentLabel: {
+    fontSize: FontSize.caption,
+    fontWeight: '700',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   translation: {
     fontSize: FontSize.caption,
     fontStyle: 'italic',

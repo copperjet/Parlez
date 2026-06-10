@@ -24,6 +24,18 @@ export interface Correction {
   gloss?: string;
 }
 
+/**
+ * One block of a structured partner explanation (spec §4.2 extension). Only
+ * present when Camille gives a longer teaching reply; `speechText`/`text` stays
+ * the authoritative spoken form, these just drive a cleaner visual layout.
+ */
+export interface MessageSegment {
+  /** Optional short heading, e.g. « Le son », « Exemple ». */
+  label?: string;
+  /** One or two sentences of the explanation. */
+  text: string;
+}
+
 /** One bubble in the conversation transcript. */
 export interface Message {
   id: string;
@@ -32,6 +44,8 @@ export interface Message {
   text: string;
   /** Correction cards, only ever attached to a Marie message. */
   corrections?: Correction[];
+  /** Optional structured layout for a longer partner explanation. */
+  segments?: MessageSegment[];
   /** Optional one-line English translation of a partner message (tap to reveal). */
   translation?: string;
   /** True while a user message is still being transcribed (faint rendering). */
@@ -69,6 +83,8 @@ export interface TurnResponse {
   speechText: string;
   /** Optional one-line English translation of speechText (tap to reveal). */
   translation?: string;
+  /** Optional structured layout for a longer explanation (empty for normal turns). */
+  segments?: MessageSegment[];
   /** Correction cards for this turn (already capped to the spec limit). */
   corrections: Correction[];
   /** Internal observations to merge into the learning profile. */

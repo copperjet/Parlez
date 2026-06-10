@@ -32,6 +32,7 @@ import {
 interface AiResult {
   speechText: string;
   translation: string;
+  segments: { label?: string; text: string }[];
   corrections: { original: string; corrected: string; gloss?: string }[];
   profileNotes: string[];
   levelSignal: 'up' | 'hold' | 'down';
@@ -166,6 +167,21 @@ function parseAi(text: string): AiResult {
   } catch {
     parsed = {};
   }
+  const segments = Array.isArray(parsed.segments)
+    ? (parsed.segments as unknown[])
+        .map((s) => {
+          const seg = (s ?? {}) as Record<string, unknown>;
+          const text = typeof seg.text === 'string' ? seg.text.trim() : '';
+          if (!text) return null;
+          const label =
+            typeof seg.label === 'string' && seg.label.trim()
+              ? seg.label.trim()
+              : undefined;
+          return label ? { label, text } : { text };
+        })
+        .filter((s): s is { label?: string; text: string } => s != null)
+        .slice(0, 6)
+    : [];
   const corrections = Array.isArray(parsed.corrections)
     ? (parsed.corrections as AiResult['corrections'])
         .filter((c) => c && c.original && c.corrected)
@@ -192,6 +208,7 @@ function parseAi(text: string): AiResult {
   return {
     speechText: typeof parsed.speechText === 'string' ? parsed.speechText : '',
     translation: typeof parsed.translation === 'string' ? parsed.translation : '',
+    segments,
     corrections,
     profileNotes,
     levelSignal: sig === 'up' || sig === 'down' ? sig : 'hold',
@@ -231,7 +248,10 @@ async function generate(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 800,
+      // Headroom for explanation turns: `segments` restates the speechText
+      // content, so a long teaching reply roughly doubles the JSON. 800 risked
+      // truncating mid-object (parseAi → {} → empty speechText → silent turn).
+      max_tokens: 1200,
       system: [
         {
           type: 'text',
@@ -259,6 +279,7 @@ function mockTurn(mode: TurnMode, personaName: string): { transcript: string } &
       transcript: '',
       speechText: `Bonjour ! Je suis ${personaName}. Comment tu t’appelles ?`,
       translation: `Hello! I'm ${personaName}. What's your name?`,
+      segments: [],
       corrections: [],
       profileNotes: [],
       levelSignal: 'hold',
@@ -270,6 +291,7 @@ function mockTurn(mode: TurnMode, personaName: string): { transcript: string } &
     transcript: 'Je vais bien, merci.',
     speechText: 'Super ! Qu’est-ce que tu as fait aujourd’hui ?',
     translation: 'Great! What did you do today?',
+    segments: [],
     corrections: [],
     profileNotes: [],
     levelSignal: 'hold',

@@ -52,6 +52,7 @@ function MessageRow({
         speaker={message.speaker}
         text={message.text}
         translation={message.translation}
+        segments={message.segments}
         faint={message.pending}
         onReplay={message.speaker === 'marie' ? () => onReplay(message.text) : undefined}
       />

@@ -49,6 +49,7 @@ import { DailyCapError, NotEntitledError } from '@/lib/services/supabaseService'
 import {
   GRACE_MS,
   MAX_CORRECTIONS_PER_TURN,
+  MAX_LISTEN_MS,
   MIN_SPEECH_MS,
   SILENCE_CONTINUE_MS,
   SILENCE_PROMPT_MS,
@@ -166,6 +167,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let awaitingEnd = false;
     let manualStop = false;
     let speechStartAt: number | null = null;
+    /** Wall-clock when the current listen began — drives the max-listen backstop. */
+    let listenStartedAt = 0;
     let lastVoiceAt = 0;
     let silenceRound = 0;
     let latestTranscript = '';
@@ -358,6 +361,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         speaker: 'marie',
         text: response.speechText,
         translation: response.translation,
+        segments: response.segments,
         corrections: response.corrections.slice(0, MAX_CORRECTIONS_PER_TURN),
       });
       s.applyLevelSignal(response.levelSignal);
@@ -662,6 +666,13 @@ export function useTurnEngine(online: boolean): TurnEngine {
     const pollTick = () => {
       if (!alive || !listening() || speechStartAt == null) return;
       const now = Date.now();
+      // Backstop: once the user has actually spoken, never let a single listen
+      // run past MAX_LISTEN_MS. Guards against a recognizer that re-emits forever
+      // and never goes silent (Android continuous mode), so the mic can't hang.
+      if (now - listenStartedAt >= MAX_LISTEN_MS) {
+        requestFinish(false);
+        return;
+      }
       const stopWindow = looksUnfinished(latestTranscript)
         ? SILENCE_STOP_UNFINISHED_MS
         : SILENCE_STOP_MS;
@@ -675,6 +686,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       store().setTurnState('listening');
       store().setLiveTranscript('');
       speechStartAt = null;
+      listenStartedAt = Date.now();
       lastVoiceAt = Date.now();
       latestTranscript = '';
       committedTranscript = '';
@@ -754,14 +766,31 @@ export function useTurnEngine(online: boolean): TurnEngine {
         if (!alive || !listening()) return;
         const t = (e.results?.[0]?.transcript ?? '').trim();
         if (t) {
-          const joined = committedTranscript ? `${committedTranscript} ${t}` : t;
-          if (e.isFinal) committedTranscript = joined;
+          // Dedup finals before accumulating. Android's continuous recognizer
+          // re-emits the SAME final repeatedly ("je fais je fais …"); the old
+          // unconditional append made committedTranscript grow without bound,
+          // which kept `grew` (below) true forever, so markVoice never stopped
+          // and the silence auto-stop (pollTick) never fired — the mic hung open.
+          if (e.isFinal) {
+            if (!committedTranscript) {
+              committedTranscript = t;
+            } else if (committedTranscript === t || committedTranscript.endsWith(t)) {
+              // Exact re-emission of the whole buffer or its tail — ignore.
+            } else if (t.startsWith(committedTranscript)) {
+              // Cumulative final (iOS-style) — the recognizer restated everything.
+              committedTranscript = t;
+            } else {
+              committedTranscript = `${committedTranscript} ${t}`;
+            }
+          }
+          const joined = e.isFinal
+            ? committedTranscript
+            : committedTranscript
+              ? `${committedTranscript} ${t}`
+              : t;
           // Only NEW speech (a longer transcript) counts as voice activity.
-          // Android's continuous recognizer re-emits the same hypothesis over
-          // and over; treating each re-emit as voice kept lastVoiceAt fresh
-          // forever, so the silence auto-stop (pollTick) never fired and the mic
-          // hung open after the user stopped talking. Volume-based markVoice
-          // (real mic energy) still runs independently for early speech onset.
+          // Volume-based markVoice (real mic energy) still runs independently
+          // for early speech onset and the "still speaking" signal.
           const grew = joined.length > latestTranscript.length;
           latestTranscript = joined;
           store().setLiveTranscript(joined);

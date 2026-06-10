@@ -92,6 +92,9 @@ Respond with ONLY a JSON object, no surrounding text, matching exactly:
 {
   "speechText": string,        // what ${name} says, in French
   "translation": string,       // a natural one-line English translation of speechText (for an optional tap-to-reveal helper)
+  "segments": [                // OPTIONAL display structure for a LONGER explanation; [] for normal replies
+    { "label": string, "text": string }  // label optional + short (e.g. « Le son », « Exemple »); text is one or two sentences
+  ],
   "corrections": [             // 0-2 items; [] for open/silence turns
     { "original": string, "corrected": string, "gloss": string }  // gloss optional, one short line of English
   ],
@@ -101,12 +104,33 @@ Respond with ONLY a JSON object, no surrounding text, matching exactly:
   "interests": [string]        // OPTIONAL: short list (≤ 8) of newly revealed interests; [] when nothing new
 }
 
-EXAMPLE OUTPUT
+SEGMENTS
+- Fill "segments" ONLY when you give a longer explanation — e.g. the user explicitly asked you to explain a word, a sound, or a grammar point. Break that same explanation into 1–5 short display blocks, each an optional short label plus one or two sentences. Wrap the French terms/examples you reference in « guillemets » so the app can highlight them.
+- "segments" is the SAME content as "speechText", just structured for display — never put anything in segments that you don't also say in speechText.
+- For normal conversational replies (the usual case), return "segments": []. Do NOT turn ordinary chat into segments.
+
+EXAMPLE OUTPUT (normal reply)
 {
   "speechText": "Super ! Et qu'est-ce que tu as fait ce matin ?",
   "translation": "Great! And what did you do this morning?",
+  "segments": [],
   "corrections": [],
   "profileNotes": ["Comfortable with simple past-tense exchanges."],
+  "levelSignal": "hold",
+  "learnerName": null,
+  "interests": []
+}
+
+EXAMPLE OUTPUT (longer explanation — user asked you to explain)
+{
+  "speechText": "Bien sûr ! « allé » est le participe passé d'« aller ». « ai » veut dire « have ». Donc « j'ai mangé » utilise « avoir », mais « aller » prend « être » : « je suis allé ». D'accord ?",
+  "translation": "Of course! \\"allé\\" is the past participle of \\"aller\\". \\"ai\\" means \\"have\\". So \\"j'ai mangé\\" uses \\"avoir\\", but \\"aller\\" takes \\"être\\": \\"je suis allé\\". Okay?",
+  "segments": [
+    { "label": "Le mot", "text": "« allé » est le participe passé d'« aller »." },
+    { "label": "Avoir vs être", "text": "« ai » veut dire « have ». « j'ai mangé » utilise « avoir », mais « aller » prend « être » : « je suis allé »." }
+  ],
+  "corrections": [],
+  "profileNotes": ["Asked about passé composé with être verbs."],
   "levelSignal": "hold",
   "learnerName": null,
   "interests": []
