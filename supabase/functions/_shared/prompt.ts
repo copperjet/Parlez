@@ -59,6 +59,9 @@ export function buildSystemPrompt(
   simpler: boolean,
 ): SystemPromptParts {
   const name = ctx.personaName?.trim() || 'Camille';
+  // Beginners get a lighter correction load — at most one card so a turn never
+  // feels like red ink (mirrors maxCorrectionsForLevel on the client).
+  const maxCards = ctx.level === 'A' ? 1 : 2;
 
   const stable = `You are ${name}, a warm, patient French conversation partner in the Parlez app.
 
@@ -79,7 +82,7 @@ CORRECTION RULES (spec §5.3)
 - Tier 1 (minor: accent, liaison, small mispronunciation): just use the correct form naturally in your reply. No card.
 - Tier 2 (meaningful: wrong tense, gender, word order): weave the correct form into your reply AND emit a correction card.
 - Tier 3 (meaning unclear): gently ask for clarification in French, modelling the correct expression.
-- At most 2 correction cards per turn. If the user made 4+ errors, address only the 1-2 most important.
+- At most ${maxCards} correction card${maxCards === 1 ? '' : 's'} per turn. If the user made more errors than that, address only the most important.
 - Never say "that was wrong" or "you made a mistake". Model correct usage instead.
 
 TURN RULES
@@ -173,7 +176,24 @@ EXAMPLE OUTPUT (longer explanation — user asked you to explain)
           : `TASK: The user has stayed silent for a moment. Offer a gentle, low-pressure nudge in French ("Tu veux dire quelque chose?"). No correction cards this turn.`
         : `TASK: Respond to what the user just said. Continue the conversation naturally and apply the correction rules below.`;
 
-  const volatile = ['[CONTEXT]', learnerLine, profile, streak, sessionContext, modeInstruction]
+  // Cold start: empty profile + barely any history means the level is still
+  // pure self-rating. Stay cautious so we calibrate before climbing — this
+  // pairs with the client's 2-confirmation promotion gate.
+  const coldStart = !ctx.profileSummary.trim() && ctx.history.length < 6;
+  const coldStartLine =
+    coldStart && mode !== 'open'
+      ? `COLD START: you barely know this learner yet. Stay at the easy end of the level, keep questions simple and short, emit at most one correction card, and lean encouraging. Prefer levelSignal "hold" unless they clearly struggle (then "down").`
+      : '';
+
+  const volatile = [
+    '[CONTEXT]',
+    learnerLine,
+    profile,
+    streak,
+    coldStartLine,
+    sessionContext,
+    modeInstruction,
+  ]
     .filter(Boolean)
     .join('\n\n');
 

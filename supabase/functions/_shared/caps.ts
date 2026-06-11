@@ -34,7 +34,12 @@ export interface Entitlement {
  *
  *   - Row present, status active/trialing/in_grace, not past current_period_end
  *     (lifetime never expires) → entitled.
- *   - Row present but expired/cancelled → NOT entitled (definitive deny).
+ *   - Row present but expired/cancelled → RevenueCat REST verify before denying.
+ *     The mirror only learns about renewals from the webhook, so right at a
+ *     period boundary the row reads expired until the RENEWAL event lands —
+ *     a real (if brief) window in production, and a constant one with Play
+ *     test subscriptions that renew every few minutes. RC fails closed, so a
+ *     genuinely churned user is still denied.
  *   - No row (webhook lag on a fresh purchase) → RevenueCat REST fallback.
  */
 export async function loadEntitlement(
@@ -62,7 +67,12 @@ export async function loadEntitlement(
       tier === 'lifetime' ||
       !row.current_period_end ||
       new Date(row.current_period_end).getTime() > Date.now();
-    return { tier, entitled: activeStatus && notExpired };
+    if (activeStatus && notExpired) {
+      return { tier, entitled: true };
+    }
+    // Stale-looking row — ask RevenueCat directly before denying (see above).
+    const rc = await fetchEntitlementFromRC(userId);
+    return { tier: rc.tier ?? tier, entitled: rc.entitled };
   }
 
   // Mirror miss — verify directly with RevenueCat so a just-purchased user isn't

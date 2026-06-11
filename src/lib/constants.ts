@@ -2,6 +2,7 @@
  * Conversation-rhythm constants, all sourced from the Parlez spec (§3, §6).
  * One place so the turn loop, recorder, and UI stay in agreement.
  */
+import type { Level } from '@/lib/types';
 
 /** Splash screen max duration before onboarding (spec §3.1 step 1). */
 export const SPLASH_MS = 1500;
@@ -36,6 +37,15 @@ export const MIN_SPEECH_MS = 500;
  */
 export const MAX_LISTEN_MS = 25000;
 
+/**
+ * Auto-send when the transcript has stopped gaining words for this long, even
+ * if the volume meter still reads "voice" (noisy room, recognizer echo). Keeps
+ * the practical auto-send delay far under MAX_LISTEN_MS while staying longer
+ * than the unfinished-sentence silence window, so a thinking pause is never cut
+ * earlier than it already would be.
+ */
+export const TRANSCRIPT_STALE_STOP_MS = 6000;
+
 /** Audio capture format for STT (spec §7.4). */
 export const SAMPLE_RATE = 16000;
 
@@ -52,6 +62,14 @@ export const FRESH_TOPIC_GAP_MS = 48 * 60 * 60 * 1000;
 
 /** Max correction cards shown per Marie turn (spec §5.3.2). */
 export const MAX_CORRECTIONS_PER_TURN = 2;
+
+/**
+ * Per-level correction cap. Beginners (A) get at most one card so a turn never
+ * feels like red ink; B/C keep the full ceiling. Must stay ≤ MAX_CORRECTIONS_PER_TURN.
+ */
+export function maxCorrectionsForLevel(level: Level): number {
+  return level === 'A' ? 1 : MAX_CORRECTIONS_PER_TURN;
+}
 
 /**
  * The conversation partner's fixed name. "Camille" is gender-neutral, so it

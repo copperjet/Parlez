@@ -16,10 +16,19 @@ const CHOICE_TO_LEVEL: Record<OnboardingChoice, Level> = {
   nothing: 'A',
   little: 'A',
   some: 'B',
-  decent: 'C',
+  // Self-rating is unreliable, so we never seed the top level — "decent" starts
+  // at B and earns C through level-up signals (see applyLevelSignal).
+  decent: 'B',
 };
 
 const LEVELS: Level[] = ['A', 'B', 'C'];
+
+/**
+ * Consecutive 'up' signals required before the level actually rises. Promotion
+ * is deliberately slower than demotion: one good turn shouldn't over-promote a
+ * user into a harder level they then struggle with.
+ */
+const LEVEL_UP_CONFIRMATIONS = 2;
 
 /** Marie's internal level shift — invisible to the user (spec §5.2). */
 function shiftLevel(level: Level, signal: LevelSignal): Level {
@@ -42,6 +51,8 @@ interface AppStore {
   onboardingChoice: OnboardingChoice | null;
   /** Marie's internal level estimate. */
   level: Level;
+  /** Consecutive 'up' signals seen so far — gates promotion (in-memory only). */
+  levelUpStreak: number;
 
   /** User settings (spec §4.5). */
   settings: Settings;
@@ -127,6 +138,7 @@ export const useAppStore = create<AppStore>((set) => ({
   hasOnboarded: false,
   onboardingChoice: null,
   level: 'B',
+  levelUpStreak: 0,
   settings: DEFAULT_SETTINGS,
   messages: [],
   priorHistory: [],
@@ -193,7 +205,17 @@ export const useAppStore = create<AppStore>((set) => ({
   setErrorNotice: (errorNotice) => set({ errorNotice }),
 
   applyLevelSignal: (signal) =>
-    set((s) => ({ level: shiftLevel(s.level, signal) })),
+    set((s) => {
+      // Demote immediately; reset the up-run on anything that isn't 'up'.
+      if (signal === 'down')
+        return { level: shiftLevel(s.level, 'down'), levelUpStreak: 0 };
+      if (signal === 'hold') return { levelUpStreak: 0 };
+      // 'up' — only promote after enough *consecutive* up signals.
+      const streak = s.levelUpStreak + 1;
+      if (streak >= LEVEL_UP_CONFIRMATIONS)
+        return { level: shiftLevel(s.level, 'up'), levelUpStreak: 0 };
+      return { levelUpStreak: streak };
+    }),
 
   setProfileSummary: (profileSummary) => set({ profileSummary }),
 
@@ -240,6 +262,7 @@ export const useAppStore = create<AppStore>((set) => ({
   resetAll: () =>
     set((s) => ({
       level: 'B',
+      levelUpStreak: 0,
       messages: [],
       priorHistory: [],
       profileSummary: '',

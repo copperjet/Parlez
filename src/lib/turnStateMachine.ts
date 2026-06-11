@@ -48,13 +48,14 @@ import { router } from 'expo-router';
 import { DailyCapError, NotEntitledError } from '@/lib/services/supabaseService';
 import {
   GRACE_MS,
-  MAX_CORRECTIONS_PER_TURN,
+  maxCorrectionsForLevel,
   MAX_LISTEN_MS,
   MIN_SPEECH_MS,
   SILENCE_CONTINUE_MS,
   SILENCE_PROMPT_MS,
   SILENCE_STOP_MS,
   SILENCE_STOP_UNFINISHED_MS,
+  TRANSCRIPT_STALE_STOP_MS,
   voiceName,
 } from '@/lib/constants';
 import type { SynthesizedSpeech } from '@/lib/services';
@@ -131,6 +132,21 @@ export function looksUnfinished(text: string): boolean {
   return CONTINUATION_CUES.has(lastWord);
 }
 
+/**
+ * Canonical form for comparing recognizer transcripts. Android's continuous
+ * recognizer re-emits the same speech with drifting punctuation and casing
+ * ("salut" / "Salut !" / "Salut."), which defeats exact-string dedup and makes
+ * the transcript look like it keeps growing — postponing the silence auto-stop
+ * all the way to the MAX_LISTEN_MS backstop. Compare normalized; display raw.
+ */
+function normalizeTranscript(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[.,!?…:;«»"'’\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function micFailureNotice(code: string | null, online: boolean): string {
   if (code === 'not-allowed' || code === 'service-not-allowed') {
     return 'Microphone access is off — turn it on in Settings.';
@@ -172,6 +188,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let lastVoiceAt = 0;
     let silenceRound = 0;
     let latestTranscript = '';
+    /** Wall-clock of the last genuine transcript growth — drives the stale-transcript auto-send. */
+    let lastGrowthAt = 0;
     /**
      * Finalized segments accumulated across pauses. Android's continuous
      * recognizer finalizes a segment after each pause and starts the next one
@@ -362,7 +380,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         text: response.speechText,
         translation: response.translation,
         segments: response.segments,
-        corrections: response.corrections.slice(0, MAX_CORRECTIONS_PER_TURN),
+        corrections: response.corrections.slice(0, maxCorrectionsForLevel(s.level)),
       });
       s.applyLevelSignal(response.levelSignal);
       void saveMessage(marieMsg);
@@ -673,6 +691,19 @@ export function useTurnEngine(online: boolean): TurnEngine {
         requestFinish(false);
         return;
       }
+      // The volume meter can keep reading "voice" (background noise, handling,
+      // speaker echo) long after the user stopped, pinning lastVoiceAt fresh and
+      // pushing the send all the way to the MAX_LISTEN_MS backstop. Real speech
+      // grows the transcript — so once words have stopped arriving for
+      // TRANSCRIPT_STALE_STOP_MS, send what we have.
+      if (
+        latestTranscript &&
+        lastGrowthAt > 0 &&
+        now - lastGrowthAt >= TRANSCRIPT_STALE_STOP_MS
+      ) {
+        requestFinish(false);
+        return;
+      }
       const stopWindow = looksUnfinished(latestTranscript)
         ? SILENCE_STOP_UNFINISHED_MS
         : SILENCE_STOP_MS;
@@ -689,6 +720,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       listenStartedAt = Date.now();
       lastVoiceAt = Date.now();
       latestTranscript = '';
+      lastGrowthAt = 0;
       committedTranscript = '';
       recognitionUri = null;
       manualStop = false;
@@ -738,15 +770,38 @@ export function useTurnEngine(online: boolean): TurnEngine {
       }
       if (!alive) return;
       store().setTurnState('processing');
-      let response: TurnResponse;
-      try {
-        response = await store().service.openTurn(buildContext());
-      } catch {
-        // openTurn failed (token expired after being away, entitlement still
-        // propagating right after a purchase, slow/hung server). Don't leave the
-        // state stuck on 'processing' — that's the permanently hung ••• bubble.
-        // Drop to idle with a gentle, tappable retry instead.
+      // Mirror runUserTurn's error semantics: one automatic retry on transient
+      // failure (cold network at app launch, slow function cold-start), and the
+      // typed sentinels routed properly instead of swallowed into the generic
+      // "couldn't start" banner — a daily-cap 402 or stale-entitlement 403 at
+      // open is not a technical failure.
+      let response: TurnResponse | null = null;
+      for (let attempt = 0; attempt < 2 && response == null; attempt += 1) {
+        try {
+          response = await store().service.openTurn(buildContext());
+        } catch (e) {
+          if (e instanceof NotEntitledError) {
+            // Server says the cached entitlement is stale — refresh and route to
+            // the paywall, same as a reply turn.
+            void useSubscriptionStore.getState().refresh();
+            store().setTurnState('idle');
+            router.replace('/paywall' as never);
+            return;
+          }
+          if (e instanceof DailyCapError) {
+            // callTurn already called setCapBlocked — the cap UI takes it from here.
+            store().setTurnState('idle');
+            return;
+          }
+          if (__DEV__) console.warn('[open]', e instanceof Error ? e.message : String(e));
+          if (attempt === 0) await wait(3000);
+        }
         if (!alive) return;
+      }
+      if (response == null) {
+        // Both attempts failed (token expired after being away, slow/hung
+        // server). Don't leave the state stuck on 'processing' — that's the
+        // permanently hung ••• bubble. Drop to idle with a tappable retry.
         store().setErrorNotice(
           onlineRef.current
             ? `${voiceName(store().settings.voice)} couldn’t start just now. Tap the mic to try again.`
@@ -755,7 +810,6 @@ export function useTurnEngine(online: boolean): TurnEngine {
         store().setTurnState('idle');
         return;
       }
-      if (!alive) return;
       // Streak is intentionally NOT ticked here — opening the app doesn't
       // count as practice. It ticks on the first real user reply (runUserTurn).
       await speak(response);
@@ -767,16 +821,20 @@ export function useTurnEngine(online: boolean): TurnEngine {
         const t = (e.results?.[0]?.transcript ?? '').trim();
         if (t) {
           // Dedup finals before accumulating. Android's continuous recognizer
-          // re-emits the SAME final repeatedly ("je fais je fais …"); the old
-          // unconditional append made committedTranscript grow without bound,
-          // which kept `grew` (below) true forever, so markVoice never stopped
-          // and the silence auto-stop (pollTick) never fired — the mic hung open.
+          // re-emits the SAME final repeatedly ("je fais je fais …"), often with
+          // drifting punctuation/casing ("salut" vs "Salut !") — so the
+          // comparison must be normalized, or every revision looks like new
+          // speech, committedTranscript grows without bound, markVoice never
+          // stops, and the silence auto-stop never fires (the mic hangs until
+          // the MAX_LISTEN_MS backstop).
           if (e.isFinal) {
-            if (!committedTranscript) {
+            const nc = normalizeTranscript(committedTranscript);
+            const nt = normalizeTranscript(t);
+            if (!nc) {
               committedTranscript = t;
-            } else if (committedTranscript === t || committedTranscript.endsWith(t)) {
-              // Exact re-emission of the whole buffer or its tail — ignore.
-            } else if (t.startsWith(committedTranscript)) {
+            } else if (!nt || nc === nt || nc.endsWith(` ${nt}`)) {
+              // Re-emission of the whole buffer or its tail (any punctuation) — ignore.
+            } else if (nt.startsWith(`${nc} `)) {
               // Cumulative final (iOS-style) — the recognizer restated everything.
               committedTranscript = t;
             } else {
@@ -788,13 +846,19 @@ export function useTurnEngine(online: boolean): TurnEngine {
             : committedTranscript
               ? `${committedTranscript} ${t}`
               : t;
-          // Only NEW speech (a longer transcript) counts as voice activity.
-          // Volume-based markVoice (real mic energy) still runs independently
-          // for early speech onset and the "still speaking" signal.
-          const grew = joined.length > latestTranscript.length;
+          // Only NEW speech counts as voice activity — measured on the
+          // normalized text, so an interim flipping "Salut" ↔ "Salut !" doesn't
+          // register as growth and reset the silence clock. Volume-based
+          // markVoice (real mic energy) still runs independently for early
+          // speech onset and the "still speaking" signal.
+          const grew =
+            normalizeTranscript(joined).length > normalizeTranscript(latestTranscript).length;
           latestTranscript = joined;
           store().setLiveTranscript(joined);
-          if (grew) markVoice();
+          if (grew) {
+            lastGrowthAt = Date.now();
+            markVoice();
+          }
         }
       },
       volumechange: (e) => {
