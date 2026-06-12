@@ -152,6 +152,14 @@ const AUDIO_MIME: Record<string, string> = {
   amr: 'audio/amr',
 };
 
+/**
+ * Minimum bytes for a recording to count as real speech worth uploading. A bare
+ * WAV/container header is only tens of bytes, and Android's system recognizer
+ * frequently persists an empty or header-only file. Below this we skip the
+ * upload and let the server fall back to the device transcript.
+ */
+const AUDIO_MIN_BYTES = 2048;
+
 async function callTurn(
   mode: TurnMode,
   ctx: TurnContext,
@@ -169,20 +177,33 @@ async function callTurn(
   const appUserId = await getCallerId();
   if (appUserId) form.append('app_user_id', appUserId);
 
-  // Attach the recording whenever we have one — Scribe (server STT) is markedly
-  // more accurate than the device recognizer and is code-switch native, so it
-  // must be the authoritative transcript. We still send `text` above as a
-  // fallback the server uses only when STT returns empty.
-  //
-  // Use React Native's URI-object FormData part ({uri,name,type}) rather than
-  // `fetch(uri).blob()`: under RN 0.85 / Hermes that blob build throws "Creating
-  // blobs from 'ArrayBuffer'… not supported" and previously killed every spoken
-  // turn — which is why audio upload had been disabled. The URI-object form
-  // never touches Blob. `audioUri` only exists on native (web has no recognizer),
-  // so this builder is always correct here. Guarded so a bad URI degrades to a
-  // text/STT-miss turn instead of throwing.
+  // Attach the recording ONLY when it is real, readable audio. Scribe (server
+  // STT) is far more accurate and code-switch native, so a good recording should
+  // be the authoritative transcript; the device `text` above stays the server's
+  // empty-STT fallback. Two hazards force a pre-check before attaching:
+  //   1. Under RN 0.85 / Hermes we cannot build a Blob from the file, so the part
+  //      must be RN's URI-object form ({uri,name,type}); the native multipart
+  //      serializer reads the file lazily at POST time.
+  //   2. Android's system recognizer frequently persists an empty/unusable file.
+  //      Appending such a URI makes the POST itself throw (unreadable part) —
+  //      which previously failed EVERY spoken turn with the generic "couldn't
+  //      respond" banner.
+  // So we probe the file first (guarded fetch → arrayBuffer) and attach only if it
+  // reads AND carries real bytes; otherwise we skip it and let the server fall
+  // back to the device transcript. The probe doubling as a read-check guarantees
+  // the POST won't choke on an unreadable part. `audioUri` only exists on native
+  // (web has no recognizer), so the URI-object builder is always correct here.
   if (opts.audioUri) {
+    let bytes = 0;
     try {
+      const probe = await fetch(opts.audioUri);
+      bytes = (await probe.arrayBuffer()).byteLength;
+    } catch {
+      // Unreadable on this runtime (e.g. Hermes/Blob, or a content:// the JS
+      // fetch can't open) — treat as no audio and degrade to the text path.
+      bytes = 0;
+    }
+    if (bytes >= AUDIO_MIN_BYTES) {
       // The recognizer persists a .wav (or .caf on iOS); keep the extension so
       // the server detects the format.
       const ext = (opts.audioUri.split('.').pop() ?? 'wav').toLowerCase();
@@ -191,20 +212,13 @@ async function callTurn(
         'audio',
         { uri: opts.audioUri, name: `turn.${ext}`, type } as unknown as Blob,
       );
-      if (__DEV__) {
-        // Phase-2 gate: confirm the device actually produced real audio (Android
-        // recognizers can persist an empty file). Logs the uploaded byte size.
-        try {
-          const head = await fetch(opts.audioUri);
-          const buf = await head.arrayBuffer();
-          console.log(`[stt] uploading audio turn.${ext} — ${buf.byteLength} bytes`);
-        } catch {
-          console.log(`[stt] uploading audio turn.${ext} — size unknown`);
-        }
-      }
-    } catch {
-      // URI unreadable on this runtime — proceed without audio; the server
-      // returns a clean STT-miss the client renders as a gentle re-prompt.
+    }
+    if (__DEV__) {
+      // Phase-2 gate: is the device producing real audio, or are we always
+      // falling back to text? The byte count is the decisive signal.
+      console.log(
+        `[stt] audio ${bytes >= AUDIO_MIN_BYTES ? 'attached' : 'skipped'} — ${bytes} bytes`,
+      );
     }
   }
 
