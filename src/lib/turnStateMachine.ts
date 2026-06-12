@@ -363,10 +363,18 @@ export function useTurnEngine(online: boolean): TurnEngine {
       const s = store();
       s.setTurnState('processing');
 
+      // Never render an empty Camille bubble. An empty speechText means the model
+      // returned nothing usable — most often a soft STT miss where a device
+      // transcript was present, so the earlier miss-guard didn't fire. Fall back to
+      // the gentle spoken re-prompt (and drop translation/segments, which would
+      // describe content that no longer exists).
+      const hasSpeech = response.speechText.trim().length > 0;
+      const speechText = hasSpeech ? response.speechText : STT_MISS_SPEECH;
+
       let speech: SynthesizedSpeech;
       try {
         speech = await s.service.synthesize(
-          response.speechText,
+          speechText,
           s.settings.voice,
           s.settings.speechSpeed,
         );
@@ -377,10 +385,12 @@ export function useTurnEngine(online: boolean): TurnEngine {
 
       const marieMsg = s.addMessage({
         speaker: 'marie',
-        text: response.speechText,
-        translation: response.translation,
-        segments: response.segments,
-        corrections: response.corrections.slice(0, maxCorrectionsForLevel(s.level)),
+        text: speechText,
+        translation: hasSpeech ? response.translation : undefined,
+        segments: hasSpeech ? response.segments : undefined,
+        corrections: hasSpeech
+          ? response.corrections.slice(0, maxCorrectionsForLevel(s.level))
+          : [],
       });
       s.applyLevelSignal(response.levelSignal);
       void saveMessage(marieMsg);
@@ -475,15 +485,22 @@ export function useTurnEngine(online: boolean): TurnEngine {
 
       // Optimistic echo: show the user's turn in the transcript immediately
       // (faint, like a messaging app) so it doesn't vanish during the STT/AI
-      // round-trip. We render the on-device transcript now; the server's
-      // (Whisper) transcript reconciles it below. With state already
-      // 'processing', the ThinkingIndicator footer shows directly beneath it.
+      // round-trip. With state already 'processing', the ThinkingIndicator footer
+      // shows directly beneath it.
+      //
+      // When Scribe will be authoritative (online + we have a recording), do NOT
+      // echo the device transcript: it's the mangled fr-FR preview of English and
+      // we'd flash it, then overwrite it with Scribe's accurate text — exactly the
+      // "sent wrong, corrected later" jank. Show a neutral placeholder instead and
+      // fill it with Scribe's transcript on reconcile below. Offline / typed turns
+      // have no Scribe, so the device/typed text IS final and we echo it directly.
       const optimisticText = (input.text ?? '').trim();
+      const scribeAuthoritative = onlineRef.current && !!input.audioUri;
       let optimisticMsg: Message | null = null;
-      if (optimisticText) {
+      if (scribeAuthoritative || optimisticText) {
         optimisticMsg = store().addMessage({
           speaker: 'user',
-          text: optimisticText,
+          text: scribeAuthoritative ? '…' : optimisticText,
           pending: true,
         });
       }
@@ -546,10 +563,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         // message is misleading.
         store().setErrorNotice(
           onlineRef.current
-            ? // DEBUG-DIAG (temporary): surface the real caught error on-device so the
-              // failure cause is readable on a preview build with no console. Revert
-              // to the clean message once the root cause is fixed (search DEBUG-DIAG).
-              `${voiceName(store().settings.voice)} couldn’t respond. [${lastTurnError ?? 'unknown'}]`
+            ? `${voiceName(store().settings.voice)} couldn’t respond just now. Please try again in a moment.`
             : 'You’re offline — reconnect and try again.',
         );
         // Keep the user's echoed turn on screen (don't drop their words) while
@@ -867,7 +881,11 @@ export function useTurnEngine(online: boolean): TurnEngine {
           const grew =
             normalizeTranscript(joined).length > normalizeTranscript(latestTranscript).length;
           latestTranscript = joined;
-          store().setLiveTranscript(joined);
+          // Online, the on-device interim is the mangled fr-FR caption; Scribe
+          // gives the accurate words when the turn lands, so keep the on-screen
+          // caption clean (the waveform already signals we're listening). Offline,
+          // the device interim is the real transcript, so show it live.
+          store().setLiveTranscript(onlineRef.current ? '' : joined);
           if (grew) {
             lastGrowthAt = Date.now();
             markVoice();
