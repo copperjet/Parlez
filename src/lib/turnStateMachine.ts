@@ -617,6 +617,16 @@ export function useTurnEngine(online: boolean): TurnEngine {
       clearEndFallback();
       setMicLevel(0);
       const text = latestTranscript.trim();
+      // `audioend` (which sets recognitionUri to the persisted .wav) normally
+      // precedes `end`, but the order isn't guaranteed on every Android stop
+      // path. When we're online with a real turn to send, give the recorder a
+      // brief moment to surface its file URI so the accurate Scribe transcript
+      // isn't lost to a race and we silently fall back to the device text.
+      if (onlineRef.current && text && !recognitionUri) {
+        for (let i = 0; i < 6 && !recognitionUri && alive; i += 1) {
+          await wait(50);
+        }
+      }
       const uri = recognitionUri;
       store().setLiveTranscript('');
 
