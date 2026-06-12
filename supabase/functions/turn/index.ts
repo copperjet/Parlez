@@ -201,6 +201,21 @@ async function transcribeScribe(audio: File): Promise<WhisperResult> {
   return { text, durationMs, bytes };
 }
 
+/**
+ * Pull a single JSON string field's value out of raw (possibly truncated) model
+ * text. Used to salvage `speechText`/`translation` when the whole object won't
+ * parse — see parseAi.
+ */
+function extractJsonString(text: string, key: string): string | null {
+  const m = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+  if (!m) return null;
+  try {
+    return JSON.parse(`"${m[1]}"`) as string; // unescape \n, \" etc.
+  } catch {
+    return m[1];
+  }
+}
+
 /** Pull the JSON object out of Claude's text output and coerce it. */
 function parseAi(text: string): AiResult {
   let parsed: Record<string, unknown> = {};
@@ -209,6 +224,21 @@ function parseAi(text: string): AiResult {
     parsed = match ? JSON.parse(match[0]) : {};
   } catch {
     parsed = {};
+  }
+  // Salvage: a long explanation turn restates content in `segments`, which can
+  // push the completion past max_tokens. The truncated text then fails to parse
+  // → empty speechText → a silent/empty bubble. `speechText` is the FIRST field
+  // in the schema, so it's almost always intact even when truncation cuts off
+  // later fields — recover it (and translation) directly so the turn still talks.
+  if (typeof parsed.speechText !== 'string' || !parsed.speechText.trim()) {
+    const sp = extractJsonString(text, 'speechText');
+    if (sp) {
+      parsed.speechText = sp;
+      if (typeof parsed.translation !== 'string' || !parsed.translation.trim()) {
+        const tr = extractJsonString(text, 'translation');
+        if (tr) parsed.translation = tr;
+      }
+    }
   }
   const segments = Array.isArray(parsed.segments)
     ? (parsed.segments as unknown[])
@@ -292,9 +322,12 @@ async function generate(
     body: JSON.stringify({
       model,
       // Headroom for explanation turns: `segments` restates the speechText
-      // content, so a long teaching reply roughly doubles the JSON. 800 risked
-      // truncating mid-object (parseAi → {} → empty speechText → silent turn).
-      max_tokens: 1200,
+      // content, so a long teaching reply roughly doubles the JSON. 800 then 1200
+      // still occasionally truncated mid-object (parseAi → empty speechText →
+      // silent turn); 1500 gives more room, and parseAi now salvages speechText
+      // from a truncated body as a backstop. Billed on actual output, so the
+      // higher ceiling only costs more when a reply genuinely needs it.
+      max_tokens: 1500,
       system: [
         {
           type: 'text',
