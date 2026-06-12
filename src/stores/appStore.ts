@@ -117,6 +117,7 @@ interface AppStore {
     pending?: boolean;
   }) => Message;
   updateMessage: (id: string, patch: Partial<Message>) => void;
+  removeMessage: (id: string) => void;
   setLiveTranscript: (text: string) => void;
   setErrorNotice: (notice: string | null) => void;
   applyLevelSignal: (signal: LevelSignal) => void;
@@ -199,6 +200,9 @@ export const useAppStore = create<AppStore>((set) => ({
     set((s) => ({
       messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
     })),
+
+  removeMessage: (id) =>
+    set((s) => ({ messages: s.messages.filter((m) => m.id !== id) })),
 
   setLiveTranscript: (liveTranscript) => set({ liveTranscript }),
 

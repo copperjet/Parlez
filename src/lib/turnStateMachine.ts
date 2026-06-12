@@ -142,9 +142,27 @@ export function looksUnfinished(text: string): boolean {
 function normalizeTranscript(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[.,!?…:;«»"'’\-]+/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/[.,!?…:;«»"’’\-]+/g, ‘ ‘)
+    .replace(/\s+/g, ‘ ‘)
     .trim();
+}
+
+/**
+ * True when `transcript` is plausibly an echo of Camille’s last message —
+ * i.e. the mic captured TTS speaker output rather than the user speaking.
+ * Only fires when the transcript is substantial (≥20 chars) and is either
+ * an exact normalized match or a long-enough substring of the reference.
+ * Short user responses ("la musique", "oui") are never flagged, preventing
+ * false positives when the user’s answer happens to use Camille’s words.
+ */
+function isEchoOf(transcript: string, reference: string): boolean {
+  const t = normalizeTranscript(transcript);
+  const r = normalizeTranscript(reference);
+  if (!t || !r || t.length < 20) return false;
+  if (t === r) return true;
+  // Partial capture: mic caught a long segment of Camille’s TTS
+  if (r.includes(t) && t.length >= Math.max(20, r.length * 0.5)) return true;
+  return false;
 }
 
 function micFailureNotice(code: string | null, online: boolean): string {
@@ -603,6 +621,23 @@ export function useTurnEngine(online: boolean): TurnEngine {
           levelSignal: 'hold',
         });
         return;
+      }
+
+      // Echo guard: if Scribe's transcript matches Camille's last message, the mic
+      // captured speaker output (barge-in or quick tap after TTS). Silently discard
+      // the turn and re-listen rather than echoing her words back as user speech.
+      if (response.transcript && scribeAuthoritative) {
+        const msgs = store().messages;
+        let lastMarieText = '';
+        for (let i = msgs.length - 1; i >= 0; i -= 1) {
+          if (msgs[i].speaker === 'marie') { lastMarieText = msgs[i].text; break; }
+        }
+        if (lastMarieText && isEchoOf(response.transcript, lastMarieText)) {
+          if (optimisticMsg) store().removeMessage(optimisticMsg.id);
+          if (liveMode) void startListening();
+          else store().setTurnState('idle');
+          return;
+        }
       }
 
       // Reconcile the user's turn into the transcript. Prefer the server's

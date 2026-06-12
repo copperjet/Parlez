@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { voiceName } from '@/lib/constants';
@@ -98,6 +98,30 @@ export function SpeechBubble({
   const accent = isMarie ? colors.accent : fg;
   const hasSegments = isMarie && !!segments && segments.length > 0;
 
+  // Typewriter reveal for new Camille bubbles — words appear progressively so the
+  // reply feels live rather than snapping in all at once. Skipped for pending/faint
+  // bubbles and segment-structured explanations (already visually broken up).
+  const [displayText, setDisplayText] = useState(text);
+  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didAnimateRef = useRef(false);
+  useEffect(() => {
+    if (animTimerRef.current) clearTimeout(animTimerRef.current);
+    if (!isMarie || faint || hasSegments || didAnimateRef.current) {
+      setDisplayText(text);
+      return;
+    }
+    didAnimateRef.current = true;
+    const words = text.split(' ');
+    let i = 0;
+    const step = () => {
+      i += 1;
+      setDisplayText(words.slice(0, i).join(' '));
+      if (i < words.length) animTimerRef.current = setTimeout(step, 60);
+    };
+    step();
+    return () => { if (animTimerRef.current) clearTimeout(animTimerRef.current); };
+  }, [text, isMarie, faint, hasSegments]);
+
   const bubbleInner = (
     <>
       {hasSegments ? (
@@ -119,7 +143,7 @@ export function SpeechBubble({
           ))}
         </View>
       ) : (
-        <HighlightedText text={text} color={fg} accent={accent} style={[styles.text]} />
+        <HighlightedText text={displayText} color={fg} accent={accent} style={[styles.text]} />
       )}
       {canTranslate && showTranslation ? (
         <Text style={[styles.translation, { color: fg }]}>{translation}</Text>
