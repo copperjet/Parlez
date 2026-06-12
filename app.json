@@ -26,7 +26,7 @@
     },
     "android": {
       "package": "com.denny32.parlez",
-      "versionCode": 14,
+      "versionCode": 15,
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -101,9 +101,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "edca72fd-af2f-49ed-a0f5-fbdde06e73ac"
+        "projectId": "f940af20-b878-4be3-9182-edbe095b2ca6"
       }
     },
-    "owner": "acecode10"
+    "owner": "copperjet"
   }
 }
