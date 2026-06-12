@@ -25,6 +25,7 @@ import { serviceClient } from '../_shared/db.ts';
 import { loadEntitlement, loadTodayElapsedMs, tierCapSeconds } from '../_shared/caps.ts';
 import {
   estimateClaudeMicrocents,
+  estimateScribeMicrocents,
   estimateWhisperMicrocents,
   type ClaudeUsage,
 } from '../_shared/pricing.ts';
@@ -122,7 +123,7 @@ function estimateSpeechMs(chars: number): number {
   return Math.max(0, Math.round((chars / 14) * 1000));
 }
 
-/** Whisper STT — French, with English code-switch tolerance (spec §6.1). */
+/** Whisper STT — fallback when Scribe is unavailable (spec §6.1). */
 async function transcribe(audio: File, ctx: PromptContext): Promise<WhisperResult> {
   const key = Deno.env.get('OPENAI_API_KEY');
   if (!key) throw new Error('OPENAI_API_KEY not set');
@@ -134,7 +135,9 @@ async function transcribe(audio: File, ctx: PromptContext): Promise<WhisperResul
   // multipart endpoint, plus a context prompt + temperature. Override via env.
   const model = Deno.env.get('OPENAI_STT_MODEL') ?? 'gpt-4o-mini-transcribe';
   fd.append('model', model);
-  fd.append('language', 'fr');
+  // No `language` pin — auto-detect so English (and French↔English code-switching)
+  // is transcribed in its own language rather than force-decoded as French. The
+  // context prompt below still biases toward this conversation's vocabulary.
   // verbose_json returns `duration` (seconds) when the model supports it; the
   // gpt-4o transcribe models do not, so we fall back to a byte-rate estimate.
   fd.append('response_format', 'json');
@@ -154,6 +157,46 @@ async function transcribe(audio: File, ctx: PromptContext): Promise<WhisperResul
   const durationMs =
     typeof data.duration === 'number'
       ? Math.round(data.duration * 1000)
+      : estimateDurationMsFromBytes(bytes);
+  return { text, durationMs, bytes };
+}
+
+/**
+ * ElevenLabs Scribe STT — the primary recognizer (spec §6.1). Scribe is
+ * code-switch native: with NO `language_code` it detects and transcribes each
+ * word in its own language, so a learner can speak French, English, or a mix in
+ * one sentence ("maintenant, je parle en français right now") and every word is
+ * captured correctly. This is the balance Parlez needs to ramp users from
+ * English toward French without the recognizer misunderstanding them.
+ */
+async function transcribeScribe(audio: File): Promise<WhisperResult> {
+  const key = Deno.env.get('ELEVENLABS_API_KEY');
+  if (!key) throw new Error('ELEVENLABS_API_KEY not set');
+
+  const fd = new FormData();
+  fd.append('file', audio, audio.name || 'turn.wav');
+  fd.append('model_id', Deno.env.get('ELEVENLABS_STT_MODEL') ?? 'scribe_v1');
+  // Intentionally omit `language_code` — that is what enables automatic language
+  // detection and intra-sentence French↔English code-switching.
+  fd.append('tag_audio_events', 'false');
+  fd.append('diarize', 'false');
+
+  const res = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: { 'xi-api-key': key },
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`scribe ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const text = typeof data.text === 'string' ? data.text.trim() : '';
+  const bytes = audio.size ?? 0;
+  // Scribe returns word-level timestamps (seconds); derive duration from the
+  // last word's end, else fall back to the byte-rate estimate.
+  const words = Array.isArray(data.words) ? (data.words as Array<{ end?: unknown }>) : [];
+  const lastEnd = words.length > 0 ? Number(words[words.length - 1]?.end) : NaN;
+  const durationMs =
+    Number.isFinite(lastEnd) && lastEnd > 0
+      ? Math.round(lastEnd * 1000)
       : estimateDurationMsFromBytes(bytes);
   return { text, durationMs, bytes };
 }
@@ -459,27 +502,50 @@ Deno.serve(async (req: Request) => {
     let userSpeechMs = 0;
 
     if (mode === 'reply' && audio instanceof File) {
-      // Whisper is the accurate path, but device audio can arrive empty or in an
-      // unsupported container (notably Android's system recognizer, which doesn't
-      // expose a usable recording). Fall back to the client's device transcript;
-      // if that's also empty we surface a clean STT-miss below — never a 500.
+      // Scribe is the accurate, code-switch-native path, but device audio can
+      // arrive empty or in an unsupported container (notably Android's system
+      // recognizer, which doesn't expose a usable recording). On any STT failure
+      // we fall back to the client's device transcript; if that's also empty we
+      // surface a clean STT-miss below — never a 500.
       try {
-        const whisper = await transcribe(audio, ctx);
-        if (whisper.text) transcript = whisper.text;
-        userSpeechMs = whisper.durationMs;
+        const provider = Deno.env.get('PARLEZ_STT_PROVIDER') ?? 'elevenlabs';
+        let stt: WhisperResult;
+        let costMicrocents: bigint;
+        if (provider === 'openai') {
+          stt = await transcribe(audio, ctx);
+          costMicrocents = estimateWhisperMicrocents(stt.durationMs);
+        } else {
+          // Primary: ElevenLabs Scribe. Fall back to Whisper on any Scribe hiccup
+          // so a single provider failure never drops the turn.
+          try {
+            stt = await transcribeScribe(audio);
+            costMicrocents = estimateScribeMicrocents(stt.durationMs);
+          } catch (e) {
+            console.error(
+              'scribe failed, falling back to whisper',
+              e instanceof Error ? e.message : e,
+            );
+            stt = await transcribe(audio, ctx);
+            costMicrocents = estimateWhisperMicrocents(stt.durationMs);
+          }
+        }
+        if (stt.text) transcript = stt.text;
+        userSpeechMs = stt.durationMs;
         if (caller) {
           logUsage({
             user_id: caller.userId,
             is_anon: caller.isAnon,
+            // STT cost rows keep the 'whisper' usage_kind + whisper_* columns
+            // regardless of provider, so no schema migration is needed.
             kind: 'whisper',
-            whisper_duration_ms: whisper.durationMs,
-            whisper_bytes: whisper.bytes,
-            estimated_cost_microcents: estimateWhisperMicrocents(whisper.durationMs).toString(),
+            whisper_duration_ms: stt.durationMs,
+            whisper_bytes: stt.bytes,
+            estimated_cost_microcents: costMicrocents.toString(),
           });
         }
       } catch (e) {
         // Log and drop through — the empty-transcript guard handles the reply.
-        console.error('whisper failed', e instanceof Error ? e.message : e);
+        console.error('stt failed', e instanceof Error ? e.message : e);
       }
     }
 

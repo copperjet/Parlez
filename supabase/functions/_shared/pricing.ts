@@ -8,7 +8,8 @@
  *   Claude Haiku 4.5: input  $1.00 / MTok, output $5.00 / MTok
  *                     cache write  $1.25 / MTok, cache read $0.10 / MTok
  *   ElevenLabs Flash v2.5: $0.10 per 1k chars (Creator tier; adjust if higher tier)
- *   Whisper / gpt-4o-mini-transcribe: $0.006 per minute audio
+ *   ElevenLabs Scribe v1 (STT): $0.40 per hour of audio
+ *   Whisper / gpt-4o-mini-transcribe: $0.006 per minute audio (fallback STT)
  */
 
 const MICROCENTS_PER_USD = 100_000_000n;
@@ -46,5 +47,16 @@ export function estimateTtsMicrocents(chars: number): bigint {
 export function estimateWhisperMicrocents(durationMs: number): bigint {
   const minutes = durationMs / 60_000;
   const usd = minutes * 0.006;
+  return usdToMicrocents(usd);
+}
+
+/**
+ * ElevenLabs Scribe (primary STT) — $0.40 per hour of audio. The cost row still
+ * uses the 'whisper' usage_kind + whisper_duration_ms column so no schema change
+ * is needed; only the rate differs from the Whisper fallback.
+ */
+export function estimateScribeMicrocents(durationMs: number): bigint {
+  const hours = durationMs / 3_600_000;
+  const usd = hours * 0.40;
   return usdToMicrocents(usd);
 }
