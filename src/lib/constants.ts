@@ -46,6 +46,15 @@ export const MAX_LISTEN_MS = 25000;
  */
 export const TRANSCRIPT_STALE_STOP_MS = 3000;
 
+/**
+ * Beat between revealing the user's transcribed bubble and Camille's reply. The
+ * server returns the transcript and the reply in one round-trip, so without this
+ * pause both bubbles land in the same frame and feel simultaneous. Holding the
+ * user's words on screen first — thinking dots beneath — lets them read what they
+ * said before Camille answers, like a real conversational turn.
+ */
+export const USER_REPLY_BEAT_MS = 550;
+
 /** Audio capture format for STT (spec §7.4). */
 export const SAMPLE_RATE = 16000;
 

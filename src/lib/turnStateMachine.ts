@@ -56,6 +56,7 @@ import {
   SILENCE_STOP_MS,
   SILENCE_STOP_UNFINISHED_MS,
   TRANSCRIPT_STALE_STOP_MS,
+  USER_REPLY_BEAT_MS,
   voiceName,
 } from '@/lib/constants';
 import type { SynthesizedSpeech } from '@/lib/services';
@@ -142,8 +143,8 @@ export function looksUnfinished(text: string): boolean {
 function normalizeTranscript(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[.,!?…:;«»"’’\-]+/g, ‘ ‘)
-    .replace(/\s+/g, ‘ ‘)
+    .replace(/[.,!?…:;«»"'’\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -661,6 +662,11 @@ export function useTurnEngine(online: boolean): TurnEngine {
           streakTickedThisSession = true;
           void tickStreak();
         }
+        // Hold the user's words on screen for a beat (thinking dots beneath, since
+        // we're still 'processing') before Camille's reply lands. The server returns
+        // both in one round-trip, so without this they'd appear in the same frame.
+        await wait(USER_REPLY_BEAT_MS);
+        if (!alive) return;
       }
       await speak(response);
       // Attribute conversation time to the local rolling-day counter using the
