@@ -6,6 +6,8 @@
  * Supabase URL + anon key are configured (see lib/env.ts). The app code never
  * depends on this directly — only on the ConversationService interface.
  */
+import * as FileSystem from 'expo-file-system/legacy';
+
 import { SPEECH_SPEEDS, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
 import { ENV, functionsBase } from '@/lib/env';
 import { getCallerId } from '@/lib/revenuecat';
@@ -165,87 +167,99 @@ async function callTurn(
   ctx: TurnContext,
   opts: { audioUri?: string | null; text?: string | null; simpler?: boolean } = {},
 ): Promise<TurnResponse> {
-  const form = new FormData();
-  form.append('mode', mode);
-  form.append('context', JSON.stringify(serializeContext(ctx)));
-  if (opts.simpler != null) form.append('simpler', String(opts.simpler));
-  if (opts.text) form.append('text', opts.text);
+  // Non-file form fields, sent as multipart parameters on either transport.
+  const params: Record<string, string> = {
+    mode,
+    context: JSON.stringify(serializeContext(ctx)),
+  };
+  if (opts.simpler != null) params.simpler = String(opts.simpler);
+  if (opts.text) params.text = opts.text;
 
   // Identify the caller for server-side usage attribution + cap enforcement.
   // Signed-in users are also identified via JWT; passing this is harmless and
   // keeps the anonymous path working.
   const appUserId = await getCallerId();
-  if (appUserId) form.append('app_user_id', appUserId);
+  if (appUserId) params.app_user_id = appUserId;
 
-  // Attach the recording ONLY when it is real, readable audio. Scribe (server
-  // STT) is far more accurate and code-switch native, so a good recording should
-  // be the authoritative transcript; the device `text` above stays the server's
-  // empty-STT fallback. Two hazards force a pre-check before attaching:
-  //   1. Under RN 0.85 / Hermes we cannot build a Blob from the file, so the part
-  //      must be RN's URI-object form ({uri,name,type}); the native multipart
-  //      serializer reads the file lazily at POST time.
-  //   2. Android's system recognizer frequently persists an empty/unusable file.
-  //      Appending such a URI makes the POST itself throw (unreadable part) —
-  //      which previously failed EVERY spoken turn with the generic "couldn't
-  //      respond" banner.
-  // So we probe the file first (guarded fetch → arrayBuffer) and attach only if it
-  // reads AND carries real bytes; otherwise we skip it and let the server fall
-  // back to the device transcript. The probe doubling as a read-check guarantees
-  // the POST won't choke on an unreadable part. `audioUri` only exists on native
-  // (web has no recognizer), so the URI-object builder is always correct here.
+  // Decide whether we have real, readable audio to upload. Scribe (server STT) is
+  // far more accurate and code-switch native, so a good recording should be the
+  // authoritative transcript; the device `text` stays the server's empty-STT
+  // fallback. Android's system recognizer sometimes persists an empty/header-only
+  // file, so probe first (guarded fetch → arrayBuffer) and only upload when it
+  // reads AND carries real bytes.
+  let audioUpload: { uri: string; mime: string } | null = null;
   if (opts.audioUri) {
     let bytes = 0;
     try {
-      const probe = await fetch(opts.audioUri);
-      bytes = (await probe.arrayBuffer()).byteLength;
+      bytes = (await (await fetch(opts.audioUri)).arrayBuffer()).byteLength;
     } catch {
-      // Unreadable on this runtime (e.g. Hermes/Blob, or a content:// the JS
-      // fetch can't open) — treat as no audio and degrade to the text path.
+      // Unreadable on this runtime — treat as no audio, degrade to the text path.
       bytes = 0;
     }
     if (bytes >= AUDIO_MIN_BYTES) {
-      // The recognizer persists a .wav (or .caf on iOS); keep the extension so
-      // the server detects the format.
       const ext = (opts.audioUri.split('.').pop() ?? 'wav').toLowerCase();
-      const type = AUDIO_MIME[ext] ?? 'audio/wav';
-      form.append(
-        'audio',
-        { uri: opts.audioUri, name: `turn.${ext}`, type } as unknown as Blob,
-      );
+      audioUpload = { uri: opts.audioUri, mime: AUDIO_MIME[ext] ?? 'audio/wav' };
     }
     if (__DEV__) {
-      // Phase-2 gate: is the device producing real audio, or are we always
-      // falling back to text? The byte count is the decisive signal.
-      console.log(
-        `[stt] audio ${bytes >= AUDIO_MIN_BYTES ? 'attached' : 'skipped'} — ${bytes} bytes`,
-      );
+      console.log(`[stt] audio ${audioUpload ? 'attached' : 'skipped'} — ${bytes} bytes`);
     }
   }
 
   const headers = await authHeaders();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(`${functionsBase()}/turn`, {
-      method: 'POST',
+  const url = `${functionsBase()}/turn`;
+
+  let status: number;
+  let body: string;
+
+  if (audioUpload) {
+    // Upload via expo-file-system's native uploader. RN's own multipart path is
+    // unusable for a file on this runtime: fetch(uri).blob() crashes Hermes
+    // ("Creating blobs from 'ArrayBuffer'…"), and the {uri,name,type} FormData
+    // part throws "Unsupported FormDataPart implementation" in RN 0.85's native
+    // networking. uploadAsync sends one RFC-2387 multipart request — the file in
+    // the `audio` field, the rest as string `parameters` — exactly what the turn
+    // fn parses. (No AbortController timeout here; voice uploads are small.)
+    const res = await FileSystem.uploadAsync(url, audioUpload.uri, {
+      httpMethod: 'POST',
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'audio',
+      mimeType: audioUpload.mime,
+      parameters: params,
       headers,
-      body: form,
-      signal: controller.signal,
     });
-  } finally {
-    clearTimeout(timeout);
+    status = res.status;
+    body = res.body ?? '';
+  } else {
+    // No audio — a plain text turn. RN's FormData handles string-only parts fine,
+    // and we keep the abort timeout so a hung connection can't wedge the UI.
+    const form = new FormData();
+    for (const [k, v] of Object.entries(params)) form.append(k, v);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+      status = res.status;
+      body = await res.text();
+    } finally {
+      clearTimeout(timeout);
+    }
   }
-  if (res.status === 403) {
+
+  if (status === 403) {
     // Server says the caller isn't entitled — cached entitlement is stale.
     throw new NotEntitledError();
   }
-  if (res.status === 402) {
+  if (status === 402) {
     // Daily cap hit server-side. Surface to the store + throw a typed sentinel
     // the turn engine catches without retrying.
     let parsed: { tier?: string; cap_seconds?: number } = {};
     try {
-      parsed = (await res.json()) as { tier?: string; cap_seconds?: number };
+      parsed = JSON.parse(body) as { tier?: string; cap_seconds?: number };
     } catch {
       // body wasn't JSON; ignore
     }
@@ -258,19 +272,19 @@ async function callTurn(
     useSubscriptionStore.getState().setCapBlocked({ tier, capSeconds });
     throw new DailyCapError(tier, capSeconds);
   }
-  if (!res.ok) {
-    // Capture the server's error body so the cause (e.g. `claude 404: model …`,
-    // `ANTHROPIC_API_KEY not set`, `whisper 401`) is diagnosable on-device instead
-    // of collapsing to a bare status. The turn engine surfaces this in DEV/diag.
-    let detail = '';
-    try {
-      detail = (await res.text()).slice(0, 300);
-    } catch {
-      // body unreadable — status alone
-    }
-    throw new Error(`turn ${res.status}${detail ? `: ${detail}` : ''}`);
+  if (status < 200 || status >= 300) {
+    // Surface the server's error body so the cause (e.g. `claude 404: model …`,
+    // `ANTHROPIC_API_KEY not set`) is diagnosable on-device instead of collapsing
+    // to a bare status. The turn engine surfaces this in DEV/diag.
+    throw new Error(`turn ${status}${body ? `: ${body.slice(0, 300)}` : ''}`);
   }
-  return parseTurnResponse(await res.json());
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    throw new Error(`turn ${status}: invalid JSON body`);
+  }
+  return parseTurnResponse(json);
 }
 
 /** Rough spoken-duration estimate, used only as a waveform-timing fallback. */
