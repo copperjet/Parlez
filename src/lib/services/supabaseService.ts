@@ -142,6 +142,16 @@ function parseTurnResponse(raw: unknown): TurnResponse {
   };
 }
 
+/** Recording extension → MIME type for the multipart audio part. */
+const AUDIO_MIME: Record<string, string> = {
+  wav: 'audio/wav',
+  m4a: 'audio/m4a',
+  mp4: 'audio/mp4',
+  caf: 'audio/x-caf',
+  '3gp': 'audio/3gpp',
+  amr: 'audio/amr',
+};
+
 async function callTurn(
   mode: TurnMode,
   ctx: TurnContext,
@@ -159,25 +169,41 @@ async function callTurn(
   const appUserId = await getCallerId();
   if (appUserId) form.append('app_user_id', appUserId);
 
-  // Attach the recording for Whisper ONLY when we have no device transcript.
-  // Native STT (expo-speech-recognition) normally yields text directly, and the
-  // server falls back to that text anyway — so sending text-only is the common,
-  // correct path. It also sidesteps a hard runtime failure: under RN 0.85 /
-  // Hermes, `fetch(fileUri).blob()` throws "Creating blobs from 'ArrayBuffer'
-  // and 'ArrayBufferView' are not supported", which previously killed every
-  // spoken turn before the request even left the device. The blob build is
-  // additionally guarded so any failure degrades to a text/STT-miss turn rather
-  // than throwing.
-  if (opts.audioUri && !opts.text) {
+  // Attach the recording whenever we have one — Scribe (server STT) is markedly
+  // more accurate than the device recognizer and is code-switch native, so it
+  // must be the authoritative transcript. We still send `text` above as a
+  // fallback the server uses only when STT returns empty.
+  //
+  // Use React Native's URI-object FormData part ({uri,name,type}) rather than
+  // `fetch(uri).blob()`: under RN 0.85 / Hermes that blob build throws "Creating
+  // blobs from 'ArrayBuffer'… not supported" and previously killed every spoken
+  // turn — which is why audio upload had been disabled. The URI-object form
+  // never touches Blob. `audioUri` only exists on native (web has no recognizer),
+  // so this builder is always correct here. Guarded so a bad URI degrades to a
+  // text/STT-miss turn instead of throwing.
+  if (opts.audioUri) {
     try {
       // The recognizer persists a .wav (or .caf on iOS); keep the extension so
-      // Whisper detects the format.
+      // the server detects the format.
       const ext = (opts.audioUri.split('.').pop() ?? 'wav').toLowerCase();
-      const fileRes = await fetch(opts.audioUri);
-      const blob = await fileRes.blob();
-      form.append('audio', blob, `turn.${ext}`);
+      const type = AUDIO_MIME[ext] ?? 'audio/wav';
+      form.append(
+        'audio',
+        { uri: opts.audioUri, name: `turn.${ext}`, type } as unknown as Blob,
+      );
+      if (__DEV__) {
+        // Phase-2 gate: confirm the device actually produced real audio (Android
+        // recognizers can persist an empty file). Logs the uploaded byte size.
+        try {
+          const head = await fetch(opts.audioUri);
+          const buf = await head.arrayBuffer();
+          console.log(`[stt] uploading audio turn.${ext} — ${buf.byteLength} bytes`);
+        } catch {
+          console.log(`[stt] uploading audio turn.${ext} — size unknown`);
+        }
+      }
     } catch {
-      // Blob unsupported on this runtime — proceed without audio; the server
+      // URI unreadable on this runtime — proceed without audio; the server
       // returns a clean STT-miss the client renders as a gentle re-prompt.
     }
   }
