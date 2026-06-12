@@ -546,7 +546,10 @@ export function useTurnEngine(online: boolean): TurnEngine {
         // message is misleading.
         store().setErrorNotice(
           onlineRef.current
-            ? `${voiceName(store().settings.voice)} couldn’t respond just now. Please try again in a moment.`
+            ? // DEBUG-DIAG (temporary): surface the real caught error on-device so the
+              // failure cause is readable on a preview build with no console. Revert
+              // to the clean message once the root cause is fixed (search DEBUG-DIAG).
+              `${voiceName(store().settings.voice)} couldn’t respond. [${lastTurnError ?? 'unknown'}]`
             : 'You’re offline — reconnect and try again.',
         );
         // Keep the user's echoed turn on screen (don't drop their words) while
