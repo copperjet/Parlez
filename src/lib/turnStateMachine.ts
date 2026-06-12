@@ -371,18 +371,10 @@ export function useTurnEngine(online: boolean): TurnEngine {
       const hasSpeech = response.speechText.trim().length > 0;
       const speechText = hasSpeech ? response.speechText : STT_MISS_SPEECH;
 
-      let speech: SynthesizedSpeech;
-      try {
-        speech = await s.service.synthesize(
-          speechText,
-          s.settings.voice,
-          s.settings.speechSpeed,
-        );
-      } catch {
-        speech = FALLBACK_SPEECH;
-      }
-      if (!alive) return;
-
+      // Show the reply the moment it arrives — don't make the user wait on TTS
+      // synthesis before they can read it. We commit the bubble and flip to
+      // 'marie_speaking' first, then synthesize and play the audio under it. This
+      // shaves the synth round-trip off the *perceived* response time.
       const marieMsg = s.addMessage({
         speaker: 'marie',
         text: speechText,
@@ -403,6 +395,26 @@ export function useTurnEngine(online: boolean): TurnEngine {
 
       s.setTurnState('marie_speaking');
       interruptedDuringSpeak = false;
+
+      let speech: SynthesizedSpeech;
+      try {
+        speech = await s.service.synthesize(
+          speechText,
+          s.settings.voice,
+          s.settings.speechSpeed,
+        );
+      } catch {
+        speech = FALLBACK_SPEECH;
+      }
+      if (!alive) return;
+      // The user can barge in while the audio is still synthesizing (the bubble is
+      // already on screen and the mic is live in 'marie_speaking'). If they did,
+      // skip playback and start listening instead of speaking over them.
+      if (interruptedDuringSpeak) {
+        interruptedDuringSpeak = false;
+        void startListening();
+        return;
+      }
       await player.play(speech, store().settings.speechSpeed);
       if (!alive) return;
       // Barge-in: the user tapped to interrupt — resume listening immediately,
