@@ -44,7 +44,7 @@ export const MAX_LISTEN_MS = 25000;
  * than the unfinished-sentence silence window, so a thinking pause is never cut
  * earlier than it already would be.
  */
-export const TRANSCRIPT_STALE_STOP_MS = 6000;
+export const TRANSCRIPT_STALE_STOP_MS = 3000;
 
 /** Audio capture format for STT (spec §7.4). */
 export const SAMPLE_RATE = 16000;
