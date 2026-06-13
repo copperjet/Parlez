@@ -19,16 +19,6 @@ import { functionsBase } from '@/lib/env';
 import { getCallerId } from '@/lib/revenuecat';
 import { authHeaders } from '@/lib/services/supabaseService';
 
-/**
- * Temporary on-device diagnostic (no Metro console on a preview APK). Surfaced as
- * a faint line in the conversation dock so we can see whether the streaming path
- * engaged and why it fell back. Flip SHOW off (conversation.tsx) once verified.
- */
-let _diag = 'stream: idle';
-export function streamDiag(): string {
-  return _diag;
-}
-
 /** Realtime model id — override via env; default verified against the dashboard. */
 const REALTIME_MODEL =
   process.env.EXPO_PUBLIC_ELEVENLABS_REALTIME_STT_MODEL ?? 'scribe_v2_realtime';
@@ -67,16 +57,7 @@ let committedResolve: ((text: string) => void) | null = null;
 
 /** True when the native capture module is present AND we're on Android. */
 export function isStreamingSttAvailable(): boolean {
-  if (Platform.OS !== 'android') {
-    _diag = 'stream: off (not android)';
-    return false;
-  }
-  if (getAudioStreamModule() == null) {
-    _diag = 'stream: off (native module null)';
-    return false;
-  }
-  _diag = 'stream: ready';
-  return true;
+  return Platform.OS === 'android' && getAudioStreamModule() != null;
 }
 
 function waitForOpen(socket: WebSocket, timeoutMs = 6000): Promise<void> {
@@ -116,7 +97,6 @@ function closeWs(): void {
  * starts instantly when the user's turn begins.
  */
 async function openSocket(): Promise<void> {
-  _diag = 'stream: token…';
   const appUserId = await getCallerId();
   const qs = appUserId ? `?app_user_id=${encodeURIComponent(appUserId)}` : '';
   const tokenRes = await fetch(`${functionsBase()}/stt-token${qs}`, {
@@ -137,10 +117,8 @@ async function openSocket(): Promise<void> {
     `&token=${encodeURIComponent(token)}`;
   const socket = new WebSocket(url);
   ws = socket;
-  _diag = 'stream: ws…';
   await waitForOpen(socket);
   wsReady = true;
-  _diag = 'stream: ws ready';
 }
 
 /**
@@ -168,7 +146,6 @@ export function prepareStreaming(): void {
 export async function startStreaming(handlers: StreamingHandlers): Promise<void> {
   const audioStream = getAudioStreamModule();
   if (!audioStream) {
-    _diag = 'stream: off (native module null)';
     throw new Error('native audio module unavailable');
   }
 
@@ -241,9 +218,10 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
     }
   });
     await audioStream.start();
-    _diag = 'stream: LIVE';
   } catch (e) {
-    _diag = 'stream: err ' + (e instanceof Error ? e.message : String(e));
+    // Failed partway (token / socket / capture) — tear down before rethrowing so
+    // the caller's fallback doesn't inherit a half-open socket or live recorder.
+    abortStreaming();
     throw e;
   }
 }
@@ -255,7 +233,6 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
 export async function stopStreaming(): Promise<StreamingResult> {
   const durationMs = startedAt ? Date.now() - startedAt : 0;
   startedAt = 0;
-  _diag = 'stream: stopping';
 
   try {
     await getAudioStreamModule()?.stop();

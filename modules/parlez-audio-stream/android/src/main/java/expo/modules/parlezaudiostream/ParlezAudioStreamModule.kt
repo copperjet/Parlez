@@ -3,6 +3,8 @@ package expo.modules.parlezaudiostream
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.util.Base64
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -14,8 +16,11 @@ import kotlin.math.sqrt
  * (~100 ms each) on the `onAudioChunk` event, along with an RMS amplitude so the
  * JS waveform keeps animating without the speech recognizer's volume events.
  *
- * VOICE_RECOGNITION source applies the platform's noise suppression / AGC tuned
- * for speech, matching what the device recognizer used.
+ * Uses the VOICE_COMMUNICATION source (not VOICE_RECOGNITION) so the platform
+ * applies acoustic echo cancellation: the mic now opens the instant Camille
+ * finishes, so without AEC it would re-capture her TTS coming out of the speaker
+ * and transcribe it as a phantom user turn. We also attach AcousticEchoCanceler +
+ * NoiseSuppressor explicitly where available.
  */
 class ParlezAudioStreamModule : Module() {
   private val sampleRate = 16_000
@@ -27,6 +32,8 @@ class ParlezAudioStreamModule : Module() {
   @Volatile private var recording = false
   private var recorder: AudioRecord? = null
   private var worker: Thread? = null
+  private var echoCanceler: AcousticEchoCanceler? = null
+  private var noiseSuppressor: NoiseSuppressor? = null
 
   override fun definition() = ModuleDefinition {
     Name("ParlezAudioStream")
@@ -56,7 +63,7 @@ class ParlezAudioStreamModule : Module() {
     val bufferSize = maxOf(minBuf, chunkSamples * 2 * 4)
 
     val rec = AudioRecord(
-      MediaRecorder.AudioSource.VOICE_RECOGNITION,
+      MediaRecorder.AudioSource.VOICE_COMMUNICATION,
       sampleRate,
       channelConfig,
       audioEncoding,
@@ -65,6 +72,16 @@ class ParlezAudioStreamModule : Module() {
     if (rec.state != AudioRecord.STATE_INITIALIZED) {
       rec.release()
       throw IllegalStateException("AudioRecord failed to initialize")
+    }
+
+    // Cancel Camille's speaker output from the mic input (the mic opens right as
+    // she finishes). Best-effort — not all devices expose these effects.
+    val sessionId = rec.audioSessionId
+    if (AcousticEchoCanceler.isAvailable()) {
+      echoCanceler = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
+    }
+    if (NoiseSuppressor.isAvailable()) {
+      noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply { enabled = true }
     }
 
     recorder = rec
@@ -106,6 +123,10 @@ class ParlezAudioStreamModule : Module() {
     } catch (_: InterruptedException) {
     }
     worker = null
+    echoCanceler?.release()
+    echoCanceler = null
+    noiseSuppressor?.release()
+    noiseSuppressor = null
     recorder?.let {
       try {
         it.stop()

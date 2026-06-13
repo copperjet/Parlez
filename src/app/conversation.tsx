@@ -19,6 +19,7 @@ import {
   CorrectionCard,
   MarieHeader,
   MicButton,
+  SignInNudge,
   SpeechBubble,
   ThinkingIndicator,
   Waveform,
@@ -28,11 +29,7 @@ import { PaywallGate } from '@/components/PaywallGate';
 import { voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useNetwork } from '@/lib/useNetwork';
-import { streamDiag } from '@/lib/audio/streamingStt';
 import { useTurnEngine } from '@/lib/turnStateMachine';
-
-/** Temporary: show the Tier-2 streaming state in the dock. Flip off once verified. */
-const SHOW_STREAM_DIAG = true;
 import type { Message, TurnState } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
@@ -144,6 +141,8 @@ function ConversationSession() {
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <MarieHeader onSettingsPress={() => router.push('/settings')} />
 
+      <SignInNudge />
+
       {banner ? (
         <Pressable
           onPress={() => bannerIsError && setErrorNotice(null)}
@@ -187,12 +186,6 @@ function ConversationSession() {
         {liveTranscript ? (
           <Text style={[styles.live, { color: colors.textFaint }]} numberOfLines={2}>
             {liveTranscript}
-          </Text>
-        ) : null}
-
-        {SHOW_STREAM_DIAG ? (
-          <Text style={[styles.live, { color: colors.textFaint, opacity: 0.5 }]} numberOfLines={1}>
-            {streamDiag()}
           </Text>
         ) : null}
 
