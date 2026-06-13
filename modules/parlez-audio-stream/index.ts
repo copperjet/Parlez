@@ -8,9 +8,10 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
  * a streaming STT WebSocket.
  *
  * Android-only (declared in expo-module.config.json) — no native code is compiled
- * on iOS. `requireOptionalNativeModule` returns null wherever the module isn't
- * present (iOS, Expo Go, web), matching the recognizer's lazy-probe pattern, so
- * the app degrades to the device recognizer instead of throwing at import time.
+ * on iOS. Accessed LAZILY via {@link getAudioStreamModule}: an eager top-level
+ * `requireOptionalNativeModule` can run before the native registry is ready and
+ * cache `null` forever (this is exactly why recognizer.ts probes lazily). We
+ * re-probe until the module resolves, then cache it.
  */
 export interface AudioChunkEvent {
   /** base64-encoded PCM16 little-endian, 16 kHz mono. */
@@ -27,7 +28,19 @@ export interface ParlezAudioStreamModule {
   addListener(event: 'onAudioChunk', listener: (e: AudioChunkEvent) => void): { remove(): void };
 }
 
-const audioStream =
-  requireOptionalNativeModule('ParlezAudioStream') as ParlezAudioStreamModule | null;
+let cached: ParlezAudioStreamModule | null = null;
 
-export default audioStream;
+/**
+ * Lazily resolve the native module. Returns null until it registers (iOS, Expo
+ * Go, web — or transiently during early app init), so callers degrade to the
+ * device recognizer. Never caches a null result, so a probe that runs before the
+ * native registry is ready doesn't permanently disable streaming.
+ */
+export function getAudioStreamModule(): ParlezAudioStreamModule | null {
+  if (cached) return cached;
+  cached =
+    (requireOptionalNativeModule('ParlezAudioStream') as ParlezAudioStreamModule | null) ?? null;
+  return cached;
+}
+
+export default getAudioStreamModule;

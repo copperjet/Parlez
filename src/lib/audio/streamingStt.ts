@@ -14,10 +14,20 @@
  */
 import { Platform } from 'react-native';
 
-import audioStream from '../../../modules/parlez-audio-stream';
+import getAudioStreamModule from '../../../modules/parlez-audio-stream';
 import { functionsBase } from '@/lib/env';
 import { getCallerId } from '@/lib/revenuecat';
 import { authHeaders } from '@/lib/services/supabaseService';
+
+/**
+ * Temporary on-device diagnostic (no Metro console on a preview APK). Surfaced as
+ * a faint line in the conversation dock so we can see whether the streaming path
+ * engaged and why it fell back. Flip SHOW off (conversation.tsx) once verified.
+ */
+let _diag = 'stream: idle';
+export function streamDiag(): string {
+  return _diag;
+}
 
 /** Realtime model id — override via env; default verified against the dashboard. */
 const REALTIME_MODEL =
@@ -54,7 +64,16 @@ let committedResolve: ((text: string) => void) | null = null;
 
 /** True when the native capture module is present AND we're on Android. */
 export function isStreamingSttAvailable(): boolean {
-  return Platform.OS === 'android' && audioStream != null;
+  if (Platform.OS !== 'android') {
+    _diag = 'stream: off (not android)';
+    return false;
+  }
+  if (getAudioStreamModule() == null) {
+    _diag = 'stream: off (native module null)';
+    return false;
+  }
+  _diag = 'stream: ready';
+  return true;
 }
 
 function waitForOpen(socket: WebSocket, timeoutMs = 6000): Promise<void> {
@@ -91,20 +110,26 @@ function closeWs(): void {
  * socket, or capture failure so the caller can fall back to the device recognizer.
  */
 export async function startStreaming(handlers: StreamingHandlers): Promise<void> {
-  if (!audioStream) throw new Error('native audio module unavailable');
-
-  // 1. Mint a single-use token (entitlement-gated server-side).
-  const appUserId = await getCallerId();
-  const qs = appUserId ? `?app_user_id=${encodeURIComponent(appUserId)}` : '';
-  const tokenRes = await fetch(`${functionsBase()}/stt-token${qs}`, {
-    method: 'GET',
-    headers: await authHeaders(),
-  });
-  if (!tokenRes.ok) {
-    throw new Error(`stt-token ${tokenRes.status}: ${(await tokenRes.text()).slice(0, 200)}`);
+  const audioStream = getAudioStreamModule();
+  if (!audioStream) {
+    _diag = 'stream: off (native module null)';
+    throw new Error('native audio module unavailable');
   }
-  const { token } = (await tokenRes.json()) as { token?: string };
-  if (!token) throw new Error('stt-token returned no token');
+
+  try {
+    // 1. Mint a single-use token (entitlement-gated server-side).
+    _diag = 'stream: token…';
+    const appUserId = await getCallerId();
+    const qs = appUserId ? `?app_user_id=${encodeURIComponent(appUserId)}` : '';
+    const tokenRes = await fetch(`${functionsBase()}/stt-token${qs}`, {
+      method: 'GET',
+      headers: await authHeaders(),
+    });
+    if (!tokenRes.ok) {
+      throw new Error(`stt-token ${tokenRes.status}: ${(await tokenRes.text()).slice(0, 120)}`);
+    }
+    const { token } = (await tokenRes.json()) as { token?: string };
+    if (!token) throw new Error('stt-token returned no token');
 
   // 2. Open the realtime socket. commit_strategy=manual so OUR turn-end logic
   // (mic tap / silence auto-stop) drives the commit; no language_code → auto
@@ -122,7 +147,9 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
     `&token=${encodeURIComponent(token)}`;
   const socket = new WebSocket(url);
   ws = socket;
+  _diag = 'stream: ws…';
   await waitForOpen(socket);
+  _diag = 'stream: ws open';
 
   socket.onmessage = (ev: { data: string }) => {
     let msg: { message_type?: string; text?: string; error?: string };
@@ -174,7 +201,12 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
       }
     }
   });
-  await audioStream.start();
+    await audioStream.start();
+    _diag = 'stream: LIVE';
+  } catch (e) {
+    _diag = 'stream: err ' + (e instanceof Error ? e.message : String(e));
+    throw e;
+  }
 }
 
 /**
@@ -184,9 +216,10 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
 export async function stopStreaming(): Promise<StreamingResult> {
   const durationMs = startedAt ? Date.now() - startedAt : 0;
   startedAt = 0;
+  _diag = 'stream: stopping';
 
   try {
-    await audioStream?.stop();
+    await getAudioStreamModule()?.stop();
   } catch {
     // ignore
   }
@@ -228,7 +261,7 @@ export function abortStreaming(): void {
   startedAt = 0;
   committedResolve = null;
   try {
-    void audioStream?.stop();
+    void getAudioStreamModule()?.stop();
   } catch {
     // ignore
   }
