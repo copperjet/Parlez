@@ -166,6 +166,29 @@ export function saveStreak(count: number, date: string | null): Promise<void> {
   });
 }
 
+/**
+ * The last streak milestone at which the user dismissed the sign-in nudge
+ * (0 = never). Drives the escalating, non-nagging anonymous sign-in prompt.
+ */
+export async function loadSignInNudgeDismissed(): Promise<number> {
+  try {
+    const db = await getDb();
+    if (!db) return 0;
+    const row = await db.getFirstAsync<{ value: string }>(
+      'SELECT value FROM kv WHERE key = ?',
+      'signInNudgeDismissed',
+    );
+    const n = Number(row?.value ?? '0');
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveSignInNudgeDismissed(milestone: number): Promise<void> {
+  return saveKv({ signInNudgeDismissed: String(Math.max(0, Math.floor(milestone))) });
+}
+
 /** Persist the consolidation counter so it survives a relaunch. */
 export function saveTurnsSinceConsolidation(count: number): Promise<void> {
   return saveKv({

@@ -38,6 +38,29 @@ function addDays(iso: string, days: number): string {
 }
 
 /**
+ * Streak lengths that warrant a one-time, value-anchored sign-in nudge for
+ * anonymous users — "back up your N-day streak". Mirrors the server's
+ * STREAK_MILESTONES (supabase/functions/_shared/prompt.ts) so the prompt the
+ * user sees lines up with the streak Marie may acknowledge.
+ */
+export const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100, 200, 365] as const;
+
+/**
+ * The milestone a sign-in nudge is currently "due" for, or null. Returns the
+ * highest milestone the user has reached that is past what they last dismissed,
+ * so the prompt escalates with the streak (3 → 7 → 14 …) without nagging at the
+ * same milestone twice. `dismissedAt` is the last milestone the user dismissed
+ * (0 = never).
+ */
+export function dueSignInMilestone(streak: number, dismissedAt: number): number | null {
+  let due: number | null = null;
+  for (const m of STREAK_MILESTONES) {
+    if (streak >= m && m > dismissedAt) due = m;
+  }
+  return due;
+}
+
+/**
  * Pure streak step.
  *   no prev          → {1, today}
  *   prev = today     → unchanged

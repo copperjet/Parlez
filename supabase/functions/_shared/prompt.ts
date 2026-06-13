@@ -188,7 +188,9 @@ EXAMPLE OUTPUT (longer explanation — user asked you to explain)
 
   const modeInstruction =
     mode === 'open'
-      ? `TASK: Open the conversation. Speak first, in French. Keep it warm, brief, and calibrated to the level. Ask exactly one easy question.`
+      ? ctx.level === 'A'
+        ? `TASK: Open the conversation. This learner may know almost no French, so open PRIMARILY IN ENGLISH (follow HOW MUCH ENGLISH above). Greet them warmly, say who you are, and set a relaxed, low-pressure tone. Then introduce ONE short French phrase (e.g. a simple greeting), give its English meaning right away, say it slowly, and invite them to repeat it. Keep it brief and ask exactly one easy question.`
+        : `TASK: Open the conversation. Speak first, in French. Keep it warm, brief, and calibrated to the level. Ask exactly one easy question.`
       : mode === 'silence'
         ? simpler
           ? `TASK: The user has stayed silent. Gently continue the conversation in French with a SIMPLER question than before. No correction cards this turn.`
