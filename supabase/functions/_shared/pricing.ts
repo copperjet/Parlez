@@ -60,3 +60,16 @@ export function estimateScribeMicrocents(durationMs: number): bigint {
   const usd = hours * 0.40;
   return usdToMicrocents(usd);
 }
+
+/**
+ * ElevenLabs Scribe v2 Realtime (streaming STT) — billed per hour of audio.
+ * Defaults to the batch Scribe rate ($0.40/hr) until realtime pricing is
+ * confirmed; override via SCRIBE_REALTIME_USD_PER_HOUR. Logged under the same
+ * 'whisper' usage_kind / whisper_duration_ms column (no schema change).
+ */
+export function estimateScribeRealtimeMicrocents(durationMs: number): bigint {
+  const perHour = Number(Deno.env.get('SCRIBE_REALTIME_USD_PER_HOUR') ?? '0.40');
+  const rate = Number.isFinite(perHour) && perHour > 0 ? perHour : 0.40;
+  const hours = durationMs / 3_600_000;
+  return usdToMicrocents(hours * rate);
+}

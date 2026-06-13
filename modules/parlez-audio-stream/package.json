@@ -1,0 +1,9 @@
+{
+  "name": "parlez-audio-stream",
+  "version": "0.1.0",
+  "description": "Raw PCM microphone streaming for Parlez live STT (16 kHz mono PCM16, base64 chunks).",
+  "main": "index.ts",
+  "author": "Parlez",
+  "license": "MIT",
+  "homepage": "https://parlez.app"
+}

@@ -63,7 +63,7 @@ export class NotEntitledError extends Error {
  * fall back to the anon key when no session exists. The apikey header stays
  * the anon key in both cases (Supabase requires it for routing).
  */
-async function authHeaders(): Promise<Record<string, string>> {
+export async function authHeaders(): Promise<Record<string, string>> {
   let token = ENV.supabaseAnonKey;
   if (supabase) {
     try {
@@ -165,7 +165,12 @@ const AUDIO_MIN_BYTES = 2048;
 async function callTurn(
   mode: TurnMode,
   ctx: TurnContext,
-  opts: { audioUri?: string | null; text?: string | null; simpler?: boolean } = {},
+  opts: {
+    audioUri?: string | null;
+    text?: string | null;
+    simpler?: boolean;
+    sttMs?: number | null;
+  } = {},
 ): Promise<TurnResponse> {
   // Non-file form fields, sent as multipart parameters on either transport.
   const params: Record<string, string> = {
@@ -174,6 +179,9 @@ async function callTurn(
   };
   if (opts.simpler != null) params.simpler = String(opts.simpler);
   if (opts.text) params.text = opts.text;
+  // Streaming STT (Tier 2): client transcribed live, so we send the measured
+  // speech duration with the text turn so the server still bills + caps it.
+  if (opts.sttMs != null && opts.sttMs > 0) params.stt_ms = String(Math.round(opts.sttMs));
 
   // Identify the caller for server-side usage attribution + cap enforcement.
   // Signed-in users are also identified via JWT; passing this is harmless and
@@ -300,7 +308,11 @@ export function createSupabaseService(): ConversationService {
     },
 
     sendTurn(input: TurnInput, ctx: TurnContext): Promise<TurnResponse> {
-      return callTurn('reply', ctx, { audioUri: input.audioUri, text: input.text });
+      return callTurn('reply', ctx, {
+        audioUri: input.audioUri,
+        text: input.text,
+        sttMs: input.sttMs ?? null,
+      });
     },
 
     promptSilence(simpler: boolean, ctx: TurnContext): Promise<TurnResponse> {

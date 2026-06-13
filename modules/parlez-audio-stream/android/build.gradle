@@ -1,0 +1,43 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'expo.modules.parlezaudiostream'
+version = '0.1.0'
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace "expo.modules.parlezaudiostream"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  lintOptions {
+    abortOnError false
+  }
+
+  publishing {
+    singleVariant("release") {
+      withSourcesJar()
+    }
+  }
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+}

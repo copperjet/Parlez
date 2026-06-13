@@ -22,6 +22,12 @@ export interface SynthesizedSpeech {
 export interface TurnInput {
   audioUri: string | null;
   text: string | null;
+  /**
+   * Measured speech duration (ms) when the transcript came from streaming STT
+   * (Tier 2). Lets the server bill + cap the user's speech time on the text path,
+   * where there's no audio file to measure. Omitted on device/typed turns.
+   */
+  sttMs?: number | null;
 }
 
 export interface ConversationService {

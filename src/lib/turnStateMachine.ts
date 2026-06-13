@@ -28,6 +28,13 @@ import {
   subscribeRecognition,
 } from '@/lib/audio/recognizer';
 import {
+  abortStreaming,
+  isStreamingSttAvailable,
+  startStreaming,
+  stopStreaming,
+  VOICE_RMS_FLOOR,
+} from '@/lib/audio/streamingStt';
+import {
   addProfileNotes,
   buildProfileSummary,
   countProfileNotes,
@@ -218,6 +225,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
      */
     let committedTranscript = '';
     let recognitionUri: string | null = null;
+    /** This listen is using the streaming STT path (vs the device recognizer). */
+    let streaming = false;
     /** Tick streak once per session, only after a real user reply. */
     let streakTickedThisSession = false;
     /**
@@ -364,6 +373,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       clearEndFallback();
       clearGraceTimer();
       abortRecognition();
+      abortStreaming();
       setMicLevel(0);
       store().setLiveTranscript('');
       store().setTurnState('idle');
@@ -472,6 +482,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       clearSilenceTimer();
       clearEndFallback();
       abortRecognition();
+      abortStreaming();
       setMicLevel(0);
       store().setLiveTranscript('');
       let response: TurnResponse;
@@ -488,6 +499,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
     const runUserTurn = async (input: {
       audioUri?: string | null;
       text?: string | null;
+      sttMs?: number | null;
     }) => {
       if (!alive) return;
       haptic('medium');
@@ -548,7 +560,11 @@ export function useTurnEngine(online: boolean): TurnEngine {
       for (let attempt = 0; attempt < 2 && response == null && !capHit && !notEntitled; attempt += 1) {
         try {
           response = await store().service.sendTurn(
-            { audioUri: input.audioUri ?? null, text: input.text ?? null },
+            {
+              audioUri: input.audioUri ?? null,
+              text: input.text ?? null,
+              sttMs: input.sttMs ?? null,
+            },
             buildContext(),
           );
         } catch (e) {
@@ -735,12 +751,64 @@ export function useTurnEngine(online: boolean): TurnEngine {
       });
     };
 
-    /** Stop the recognizer; `consumeRecognition` runs once `end` arrives. */
+    /**
+     * End-of-turn funnel for the streaming STT path. Mirrors consumeRecognition:
+     * stop capture, commit, take the streamed final as the authoritative
+     * transcript (no audio upload), and send it. An empty result with no manual
+     * stop just re-listens, same as an empty recognizer end.
+     */
+    const consumeStreaming = async () => {
+      if (!alive || !awaitingEnd) return;
+      awaitingEnd = false;
+      stopPoll();
+      clearSilenceTimer();
+      clearEndFallback();
+      setMicLevel(0);
+
+      let result: { text: string; durationMs: number };
+      try {
+        result = await stopStreaming();
+      } catch {
+        result = { text: latestTranscript.trim(), durationMs: 0 };
+      }
+      if (!alive) return;
+      store().setLiveTranscript('');
+      const text = (result.text || latestTranscript).trim();
+
+      if (!text && !manualStop) {
+        emptyEndStreak += 1;
+        if (emptyEndStreak >= 4) {
+          emptyEndStreak = 0;
+          store().setErrorNotice(micFailureNotice(null, onlineRef.current));
+          turnOff();
+          return;
+        }
+        if (liveMode) void startListening();
+        else store().setTurnState('idle');
+        return;
+      }
+      emptyEndStreak = 0;
+
+      // Streamed text is final + accurate (Scribe v2). No audioUri → no server STT
+      // round-trip; pass the measured duration so the cap still counts user speech.
+      await runUserTurn({
+        audioUri: null,
+        text: text || null,
+        sttMs: result.durationMs,
+      });
+    };
+
+    /** Stop capture; the matching consume funnel finishes the turn. */
     const requestFinish = (manual: boolean) => {
       if (!alive || !awaitingEnd) return;
       manualStop = manual;
       stopPoll();
       clearSilenceTimer();
+      if (streaming) {
+        // The streamed commit + final transcript are awaited directly in consume.
+        void consumeStreaming();
+        return;
+      }
       stopRecognition();
       clearEndFallback();
       endFallbackTimer = setTimeout(() => void consumeRecognition(), END_FALLBACK_MS);
@@ -805,8 +873,59 @@ export function useTurnEngine(online: boolean): TurnEngine {
       recognitionUri = null;
       manualStop = false;
       lastRecognizerError = null;
+      streaming = false;
       setMicLevel(0);
       haptic('light');
+
+      // Tier 2: when online and the native streaming module is available, transcribe
+      // live via ElevenLabs realtime (accurate EN/FR code-switch, no upload). On any
+      // failure (token/socket/capture) fall through to the device recognizer so a
+      // turn is never lost. Offline / iOS always uses the recognizer.
+      if (onlineRef.current && isStreamingSttAvailable()) {
+        try {
+          await startStreaming({
+            onPartial: (t) => {
+              if (!alive || !listening()) return;
+              const joined = t.trim();
+              const grew =
+                normalizeTranscript(joined).length >
+                normalizeTranscript(latestTranscript).length;
+              latestTranscript = joined;
+              store().setLiveTranscript(joined);
+              if (grew) {
+                lastGrowthAt = Date.now();
+                markVoice();
+              }
+            },
+            onAmplitude: (rms) => {
+              if (!alive || !listening()) return;
+              const amp = Math.max(0, Math.min(1, rms * 4));
+              setMicLevel((prev) => (Math.abs(prev - amp) > 0.04 ? amp : prev));
+              if (rms > VOICE_RMS_FLOOR) markVoice();
+            },
+            onError: (e) => {
+              if (__DEV__) console.warn('[stream]', e.message);
+            },
+          });
+          if (!alive) {
+            abortStreaming();
+            return;
+          }
+          streaming = true;
+          awaitingEnd = true;
+          pollTimer = setInterval(pollTick, POLL_MS);
+          const delay =
+            silenceRound === 0 ? SILENCE_PROMPT_MS : SILENCE_CONTINUE_MS;
+          silenceTimer = setTimeout(() => void onSilence(), delay);
+          return;
+        } catch (e) {
+          // Streaming unavailable this turn — clean up and use the recognizer.
+          abortStreaming();
+          streaming = false;
+          if (__DEV__) console.warn('[stream] start failed, falling back', e instanceof Error ? e.message : e);
+          if (!alive) return;
+        }
+      }
 
       let recognitionOk = false;
       try {
@@ -837,6 +956,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       clearEndFallback();
       setMicLevel(0);
       abortRecognition();
+      abortStreaming();
       store().setLiveTranscript('');
       if (!alive) return;
       await runUserTurn({ text: trimmed, audioUri: null });
@@ -1052,6 +1172,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       if (graceTimer) clearTimeout(graceTimer);
       unsubscribe?.();
       abortRecognition();
+      abortStreaming();
       player.release();
     };
   }, []);

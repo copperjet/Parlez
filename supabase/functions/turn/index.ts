@@ -26,6 +26,7 @@ import { loadEntitlement, loadTodayElapsedMs, tierCapSeconds } from '../_shared/
 import {
   estimateClaudeMicrocents,
   estimateScribeMicrocents,
+  estimateScribeRealtimeMicrocents,
   estimateWhisperMicrocents,
   type ClaudeUsage,
 } from '../_shared/pricing.ts';
@@ -492,6 +493,12 @@ Deno.serve(async (req: Request) => {
     const text = (form.get('text') as string) || null;
     const audio = form.get('audio');
     const bodyAppUserId = (form.get('app_user_id') as string) || null;
+    // Streaming STT (Tier 2): the client transcribed live and sends the final
+    // text plus the measured speech duration so the cap still counts the user's
+    // speech time on this no-audio path.
+    const sttMsRaw = Number(form.get('stt_ms'));
+    const streamedSttMs =
+      Number.isFinite(sttMsRaw) && sttMsRaw > 0 ? Math.round(sttMsRaw) : 0;
 
     if (Deno.env.get('PARLEZ_MOCK') === 'true') {
       return json(mockTurn(mode, ctx.personaName));
@@ -579,6 +586,21 @@ Deno.serve(async (req: Request) => {
       } catch (e) {
         // Log and drop through — the empty-transcript guard handles the reply.
         console.error('stt failed', e instanceof Error ? e.message : e);
+      }
+    } else if (mode === 'reply' && streamedSttMs > 0) {
+      // Streaming STT path: the transcript already arrived as `text`; no server
+      // STT ran. Attribute the user's speech time to the cap and log the realtime
+      // STT cost (reusing the 'whisper' usage_kind / whisper_* columns).
+      userSpeechMs = streamedSttMs;
+      if (caller) {
+        logUsage({
+          user_id: caller.userId,
+          is_anon: caller.isAnon,
+          kind: 'whisper',
+          whisper_duration_ms: streamedSttMs,
+          whisper_bytes: 0,
+          estimated_cost_microcents: estimateScribeRealtimeMicrocents(streamedSttMs).toString(),
+        });
       }
     }
 

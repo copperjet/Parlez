@@ -10,6 +10,11 @@ verify_jwt = false
 [functions.tts]
 verify_jwt = false
 
+# Mints a single-use ElevenLabs realtime-STT token for the client WebSocket. Same
+# self-auth model as turn/tts — verifies the caller + entitlement inside the fn.
+[functions.stt-token]
+verify_jwt = false
+
 # RevenueCat posts a custom `Authorization: Bearer <RC_WEBHOOK_SECRET>` header,
 # not a Supabase JWT. Leaving verify_jwt on (the default) makes Supabase reject
 # every call with "Missing authorization header" before the function runs — the
