@@ -12,6 +12,21 @@ import type {
   ExpoSpeechRecognitionNativeEventMap,
 } from 'expo-speech-recognition';
 
+import type { Level } from '@/lib/types';
+
+/**
+ * Device-recognizer language by level — matches the learner's dominant language
+ * so the live caption is accurate (beginners speak mostly English, so fr-FR
+ * would mangle them). Scribe remains authoritative for the mixed EN/FR
+ * transcript on send; this only governs the on-screen live caption + the offline
+ * fallback transcript.
+ */
+const RECOGNIZER_LANG_BY_LEVEL: Record<Level, string> = {
+  A: 'en-US',
+  B: 'fr-FR',
+  C: 'fr-FR',
+};
+
 let moduleRef: typeof ESRModule | null = null;
 let loaded = false;
 
@@ -66,16 +81,18 @@ export function subscribeRecognition(handlers: RecognitionHandlers): () => void 
 }
 
 /**
- * Start a French recognition session with live interim results and a persisted
- * audio file. Offline, recognition runs on-device (spec §11.1).
+ * Start a recognition session with live interim results and a persisted audio
+ * file. The recognizer language follows the learner's level
+ * ({@link RECOGNIZER_LANG_BY_LEVEL}) so the live caption is accurate. Offline,
+ * recognition runs on-device (spec §11.1).
  */
-export function startRecognition(online: boolean): void {
+export function startRecognition(online: boolean, level: Level): void {
   const mod = getModule();
   // No native module (Expo Go / web): signal the turn engine to fall back to
   // typed text. It catches this and skips the silence timers (turnStateMachine.ts).
   if (!mod) throw new Error('speech recognition unavailable');
   mod.start({
-    lang: 'fr-FR',
+    lang: RECOGNIZER_LANG_BY_LEVEL[level],
     interimResults: true,
     continuous: true,
     requiresOnDeviceRecognition: !online,

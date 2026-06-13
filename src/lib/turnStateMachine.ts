@@ -810,7 +810,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
 
       let recognitionOk = false;
       try {
-        startRecognition(onlineRef.current);
+        startRecognition(onlineRef.current, store().level);
         recognitionOk = true;
         awaitingEnd = true;
       } catch {
@@ -934,11 +934,14 @@ export function useTurnEngine(online: boolean): TurnEngine {
           const grew =
             normalizeTranscript(joined).length > normalizeTranscript(latestTranscript).length;
           latestTranscript = joined;
-          // Online, the on-device interim is the mangled fr-FR caption; Scribe
-          // gives the accurate words when the turn lands, so keep the on-screen
-          // caption clean (the waveform already signals we're listening). Offline,
-          // the device interim is the real transcript, so show it live.
-          store().setLiveTranscript(onlineRef.current ? '' : joined);
+          // Show the interim caption live as the user speaks. The recognizer
+          // language now follows the learner's level (en-US for beginners, fr-FR
+          // otherwise), so the on-device interim is accurate for their dominant
+          // language instead of fr-FR mangling English. The floating caption is
+          // low-stakes — it clears on send; the sent bubble stays Scribe-
+          // authoritative (filled on reconcile), so an imperfect mid-sentence
+          // EN/FR switch here never reaches the transcript bubble.
+          store().setLiveTranscript(joined);
           if (grew) {
             lastGrowthAt = Date.now();
             markVoice();
