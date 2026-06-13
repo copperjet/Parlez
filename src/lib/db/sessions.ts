@@ -8,6 +8,8 @@ import { MARIE_VOICES } from '@/lib/constants';
 import type { Correction, Level, Message, OnboardingChoice, Settings } from '@/lib/types';
 import { DEFAULT_SETTINGS } from '@/stores/appStore';
 
+import { getDb } from './index';
+
 /** Coerce a persisted settings blob onto the current shape (e.g. drop the
  *  retired "claire" voice so legacy installs land on a valid Female voice). */
 function sanitizeSettings(raw: Partial<Settings>): Settings {
@@ -15,10 +17,13 @@ function sanitizeSettings(raw: Partial<Settings>): Settings {
   if (!MARIE_VOICES.some((v) => v.id === merged.voice)) {
     merged.voice = DEFAULT_SETTINGS.voice;
   }
+  if (!VALID_CHAT_THEMES.includes(merged.chatTheme)) {
+    merged.chatTheme = DEFAULT_SETTINGS.chatTheme;
+  }
   return merged;
 }
 
-import { getDb } from './index';
+const VALID_CHAT_THEMES: Settings['chatTheme'][] = ['sand', 'ember', 'violet', 'supernova'];
 
 /** App state restored on launch. */
 export interface PersistedState {
@@ -37,6 +42,14 @@ export interface PersistedState {
   /** Daily-streak state — surfaced in settings only. */
   streakCount: number;
   lastSessionDate: string | null;
+  /** First-launch date (YYYY-MM-DD local) — anchors the money-back guarantee. */
+  firstLaunchDate: string | null;
+  /**
+   * True only for genuine first-time installs — the money-back guarantee tracker
+   * is shown to these users. Decided once: an install that already shows prior
+   * usage when this flag is first resolved (an upgrade) is treated as existing.
+   */
+  isFirstTimeUser: boolean;
   /** Counter that gates LLM-driven note consolidation. */
   turnsSinceConsolidation: number;
 }
@@ -53,8 +66,15 @@ const DEFAULT_STATE: PersistedState = {
   interests: [],
   streakCount: 0,
   lastSessionDate: null,
+  firstLaunchDate: null,
+  isFirstTimeUser: true,
   turnsSinceConsolidation: 0,
 };
+
+/** Today as YYYY-MM-DD local (kept local to avoid a streak.ts import cycle). */
+function todayLocalDate(): string {
+  return new Date().toLocaleDateString('en-CA');
+}
 
 async function readKv(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
@@ -71,7 +91,9 @@ async function readKv(): Promise<Map<string, string>> {
 export async function loadPersistedState(): Promise<PersistedState> {
   try {
     const kv = await readKv();
-    if (kv.size === 0) return DEFAULT_STATE;
+    // Anchor the guarantee window + first-time status on the very first launch.
+    const { firstLaunchDate, isFirstTimeUser } = await resolveGuaranteeAnchor(kv);
+    if (kv.size === 0) return { ...DEFAULT_STATE, firstLaunchDate, isFirstTimeUser };
 
     const lastActive = kv.get('lastActiveAt');
     const gap = lastActive ? Date.now() - Number(lastActive) : null;
@@ -102,6 +124,8 @@ export async function loadPersistedState(): Promise<PersistedState> {
       interests,
       streakCount,
       lastSessionDate: (kv.get('lastSessionDate') || null) ?? null,
+      firstLaunchDate,
+      isFirstTimeUser,
       turnsSinceConsolidation,
     };
   } catch {
@@ -164,6 +188,86 @@ export function saveStreak(count: number, date: string | null): Promise<void> {
     streakCount: String(Math.max(0, Math.floor(count))),
     lastSessionDate: date ?? '',
   });
+}
+
+/**
+ * Resolve the guarantee anchor (first-launch date) and whether this is a genuine
+ * first-time install — both decided once and persisted. An install that already
+ * shows prior usage at resolve time (i.e. an upgrade from before this feature) is
+ * treated as an existing user, so the money-back tracker stays hidden for them.
+ */
+async function resolveGuaranteeAnchor(
+  kv: Map<string, string>,
+): Promise<{ firstLaunchDate: string; isFirstTimeUser: boolean }> {
+  const storedDate = (kv.get('firstLaunchDate') ?? '').trim();
+  const storedFlag = kv.get('guaranteeFirstTimeUser');
+
+  // Already resolved on a prior launch — trust the stored decision.
+  if (storedDate && storedFlag != null) {
+    return { firstLaunchDate: storedDate, isFirstTimeUser: storedFlag === '1' };
+  }
+
+  // First resolve. An existing install betrays itself via prior usage signals.
+  const existingUser =
+    kv.get('hasOnboarded') === 'true' ||
+    (kv.get('lastActiveAt') ?? '').trim() !== '' ||
+    Number(kv.get('streakCount') ?? '0') > 0;
+
+  const firstLaunchDate = storedDate || todayLocalDate();
+  const isFirstTimeUser = storedFlag != null ? storedFlag === '1' : !existingUser;
+  await saveKv({
+    firstLaunchDate,
+    guaranteeFirstTimeUser: isFirstTimeUser ? '1' : '0',
+  });
+  return { firstLaunchDate, isFirstTimeUser };
+}
+
+/**
+ * Add practice seconds to a given local day's running total (upsert). Drives the
+ * 10-minute-a-day streak and the consecutive-day guarantee. Best-effort.
+ */
+export async function addDailyActivity(date: string, seconds: number): Promise<void> {
+  const add = Math.max(0, Math.round(seconds));
+  if (add === 0) return;
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.runAsync(
+      'INSERT INTO daily_activity (date, seconds) VALUES (?, ?) ' +
+        'ON CONFLICT(date) DO UPDATE SET seconds = seconds + excluded.seconds',
+      date,
+      add,
+    );
+  } catch {
+    // Best-effort — streak is engagement polish, never blocks the turn.
+  }
+}
+
+/** Per-day practice seconds, most recent first. Powers the streak calendar. */
+export async function loadDailyActivity(
+  limit = 120,
+): Promise<{ date: string; seconds: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    return await db.getAllAsync<{ date: string; seconds: number }>(
+      'SELECT date, seconds FROM daily_activity ORDER BY date DESC LIMIT ?',
+      limit,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Wipe all daily-activity history — part of "Delete all my data". */
+export async function clearDailyActivity(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.runAsync('DELETE FROM daily_activity');
+  } catch {
+    // Best-effort.
+  }
 }
 
 /**

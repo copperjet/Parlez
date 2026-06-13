@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { loadPersistedState } from '@/lib/db/sessions';
 import { initRevenueCat } from '@/lib/revenuecat';
+import { refreshStreakFromHistory } from '@/lib/streak';
 import { pushState } from '@/lib/sync';
 import { useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
@@ -32,6 +33,9 @@ export default function RootLayout() {
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
         ]);
         if (state) hydrate(state);
+        // Recompute the streak from the activity ledger so a lapsed day is
+        // reflected on launch (not just after the next turn). Best-effort.
+        void refreshStreakFromHistory();
       } catch {
         // Fall through to defaults.
       } finally {
@@ -91,6 +95,10 @@ export default function RootLayout() {
             />
             <Stack.Screen
               name="progress"
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            <Stack.Screen
+              name="streak"
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
             <Stack.Screen

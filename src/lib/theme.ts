@@ -2,8 +2,16 @@
  * Parlez theme — warm, calm, conversation-first.
  * Marie's bubbles use a soft sand surface; the user's use the indigo accent.
  * Every colour comes from here; nothing hard-codes a hex value.
+ *
+ * Light/dark follows the device. On top of that the user picks a *chat theme*
+ * (settings.chatTheme) — a curated accent family that recolours the user bubble,
+ * accents and waveform. Surfaces stay the calm sand palette so text contrast and
+ * Marie's bubble are never compromised. Theme ids/colours mirror the streak
+ * flame tiers so the app feels of a piece.
  */
+import type { ChatThemeId } from '@/lib/types';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAppStore } from '@/stores/appStore';
 
 const light = {
   background: '#FBF9F6',
@@ -77,9 +85,97 @@ const dark: typeof light = {
   scrim: 'rgba(0,0,0,0.55)',
 };
 
-export const Palette = { light, dark } as const;
 export type ThemeColors = typeof light;
 export type ThemeMode = 'light' | 'dark';
+
+/** The accent slots a chat theme overrides on top of the sand base. */
+interface AccentFamily {
+  accent: string;
+  accentSoft: string;
+  onAccent: string;
+  userBubble: string;
+  userBubbleText: string;
+  waveform: string;
+}
+
+/** Apply an accent family to a base palette without touching surfaces/text. */
+function withAccent(base: ThemeColors, a: AccentFamily): ThemeColors {
+  return { ...base, ...a };
+}
+
+/**
+ * Curated chat themes. Each is a full {light, dark} palette so it reads well in
+ * both modes. `sand` is the original indigo default; the others mirror the
+ * streak flame tiers (ember / cosmic violet / supernova blue).
+ */
+export const THEMES: Record<ChatThemeId, { light: ThemeColors; dark: ThemeColors }> = {
+  sand: { light, dark },
+  ember: {
+    light: withAccent(light, {
+      accent: '#D9622E',
+      accentSoft: '#FBE7DA',
+      onAccent: '#FFFFFF',
+      userBubble: '#D9622E',
+      userBubbleText: '#FFFFFF',
+      waveform: '#D9622E',
+    }),
+    dark: withAccent(dark, {
+      accent: '#F0925E',
+      accentSoft: '#3A271C',
+      onAccent: '#1F1206',
+      userBubble: '#C9551F',
+      userBubbleText: '#FFFFFF',
+      waveform: '#F0925E',
+    }),
+  },
+  violet: {
+    light: withAccent(light, {
+      accent: '#8B4FD6',
+      accentSoft: '#EFE5FA',
+      onAccent: '#FFFFFF',
+      userBubble: '#8B4FD6',
+      userBubbleText: '#FFFFFF',
+      waveform: '#8B4FD6',
+    }),
+    dark: withAccent(dark, {
+      accent: '#B98BE8',
+      accentSoft: '#2E2440',
+      onAccent: '#1A1026',
+      userBubble: '#7E45C7',
+      userBubbleText: '#FFFFFF',
+      waveform: '#B98BE8',
+    }),
+  },
+  supernova: {
+    light: withAccent(light, {
+      accent: '#2486E6',
+      accentSoft: '#DCEDFC',
+      onAccent: '#FFFFFF',
+      userBubble: '#2486E6',
+      userBubbleText: '#FFFFFF',
+      waveform: '#2486E6',
+    }),
+    dark: withAccent(dark, {
+      accent: '#5FB0F2',
+      accentSoft: '#1C2C3D',
+      onAccent: '#08182A',
+      userBubble: '#1E78D6',
+      userBubbleText: '#FFFFFF',
+      waveform: '#5FB0F2',
+    }),
+  },
+};
+
+/** Picker metadata — id, label, and a representative swatch for each theme. */
+export const THEME_OPTIONS: { id: ChatThemeId; label: string; swatch: string }[] = [
+  { id: 'sand', label: 'Indigo', swatch: '#5B6CB8' },
+  { id: 'ember', label: 'Ember', swatch: '#D9622E' },
+  { id: 'violet', label: 'Violet', swatch: '#8B4FD6' },
+  { id: 'supernova', label: 'Supernova', swatch: '#2486E6' },
+];
+
+/** Backwards-compatible default palette export (the sand theme). */
+export const Palette = { light, dark } as const;
 
 export const Spacing = {
   xs: 4,
@@ -108,6 +204,8 @@ export const FontSize = {
 
 export function useTheme(): { colors: ThemeColors; mode: ThemeMode } {
   const scheme = useColorScheme();
+  const themeId = useAppStore((s) => s.settings.chatTheme);
   const mode: ThemeMode = scheme === 'dark' ? 'dark' : 'light';
-  return { colors: Palette[mode], mode };
+  const family = THEMES[themeId] ?? THEMES.sand;
+  return { colors: family[mode], mode };
 }

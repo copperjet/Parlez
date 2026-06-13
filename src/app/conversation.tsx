@@ -139,7 +139,10 @@ function ConversationSession() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <MarieHeader onSettingsPress={() => router.push('/settings')} />
+      <MarieHeader
+        onSettingsPress={() => router.push('/settings')}
+        onStreakPress={() => router.push('/streak' as never)}
+      />
 
       <SignInNudge />
 

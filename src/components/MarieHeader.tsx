@@ -5,13 +5,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
+import { StreakChip } from './StreakChip';
 
 /**
  * The conversation screen's only chrome (spec §4.1): the partner's name + avatar
  * on the left, a settings icon on the right. The name follows the selected voice
  * so it matches who the user actually hears. Nothing else ever goes here.
  */
-export function MarieHeader({ onSettingsPress }: { onSettingsPress: () => void }) {
+export function MarieHeader({
+  onSettingsPress,
+  onStreakPress,
+}: {
+  onSettingsPress: () => void;
+  onStreakPress: () => void;
+}) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const name = voiceName(useAppStore((s) => s.settings.voice));
@@ -35,14 +42,17 @@ export function MarieHeader({ onSettingsPress }: { onSettingsPress: () => void }
         <Text style={[styles.name, { color: colors.text }]}>{name}</Text>
       </View>
 
-      <Pressable
-        onPress={onSettingsPress}
-        accessibilityRole="button"
-        accessibilityLabel="Settings"
-        hitSlop={12}
-        style={({ pressed }) => [styles.settings, pressed && { opacity: 0.5 }]}>
-        <Ionicons name="settings-outline" size={24} color={colors.textSecondary} />
-      </Pressable>
+      <View style={styles.actions}>
+        <StreakChip onPress={onStreakPress} />
+        <Pressable
+          onPress={onSettingsPress}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          hitSlop={12}
+          style={({ pressed }) => [styles.settings, pressed && { opacity: 0.5 }]}>
+          <Ionicons name="settings-outline" size={24} color={colors.textSecondary} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -57,6 +67,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   identity: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   avatar: {
     width: 36,
     height: 36,

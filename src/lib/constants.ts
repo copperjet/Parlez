@@ -69,6 +69,22 @@ export type SpeechSpeed = keyof typeof SPEECH_SPEEDS;
 /** A fresh topic is started if the gap since the last session exceeds this (spec §3.2). */
 export const FRESH_TOPIC_GAP_MS = 48 * 60 * 60 * 1000;
 
+/**
+ * Practice time that marks a calendar day "complete" for the streak — 10 minutes
+ * of conversation. Accumulated locally per day (see `daily_activity` + the rolling
+ * usage counter); once a day crosses this, it counts toward the streak.
+ */
+export const DAILY_GOAL_SECONDS = 10 * 60;
+
+/**
+ * Money-back guarantee (first-time users): complete this many *consecutive* days
+ * of {@link DAILY_GOAL_SECONDS} practice, within {@link GUARANTEE_WINDOW_DAYS} of
+ * first launch, to qualify for a refund. Refunds are processed by the store, not
+ * in-app — the app only tracks and surfaces eligibility.
+ */
+export const GUARANTEE_DAYS = 20;
+export const GUARANTEE_WINDOW_DAYS = 30;
+
 /** Max correction cards shown per Marie turn (spec §5.3.2). */
 export const MAX_CORRECTIONS_PER_TURN = 2;
 

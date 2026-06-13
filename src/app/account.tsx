@@ -34,6 +34,7 @@ import { onSignIn } from '@/lib/sync';
 import { supabase, syncAvailable } from '@/lib/supabase';
 import {
   clearActivity,
+  clearDailyActivity,
   clearMessages,
   clearStreak,
   clearStructuredProfile,
@@ -339,6 +340,7 @@ export default function Account() {
               void clearProfile();
               void clearStructuredProfile();
               void clearStreak();
+              void clearDailyActivity();
               void clearActivity();
               void saveProfileSummary('');
               await useSubscriptionStore.getState().logOutAndReset();

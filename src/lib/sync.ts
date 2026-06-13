@@ -98,6 +98,8 @@ export async function pullState(): Promise<boolean> {
     interests,
     streakCount,
     lastSessionDate,
+    firstLaunchDate: store.firstLaunchDate,
+    isFirstTimeUser: store.isFirstTimeUser,
     turnsSinceConsolidation: store.turnsSinceConsolidation,
   });
   void saveLevel(level);

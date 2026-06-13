@@ -43,13 +43,14 @@ import {
   replaceNotes,
 } from '@/lib/db/profile';
 import {
+  addDailyActivity,
   saveLevel,
   saveMessage,
   saveProfileSummary,
   saveStructuredProfile,
   saveTurnsSinceConsolidation,
 } from '@/lib/db/sessions';
-import { tickStreak } from '@/lib/streak';
+import { refreshStreakFromHistory, todayLocal } from '@/lib/streak';
 import { consolidateProfile } from '@/lib/services';
 import { router } from 'expo-router';
 
@@ -228,8 +229,6 @@ export function useTurnEngine(online: boolean): TurnEngine {
     let recognitionUri: string | null = null;
     /** This listen is using the streaming STT path (vs the device recognizer). */
     let streaming = false;
-    /** Tick streak once per session, only after a real user reply. */
-    let streakTickedThisSession = false;
     /**
      * Live chat toggle (spec §6.3, tap-to-toggle model). The mic is OFF by
      * default: Camille greets, then waits. Tapping turns live mode on and starts
@@ -683,12 +682,6 @@ export function useTurnEngine(online: boolean): TurnEngine {
           userMsg = store().addMessage({ speaker: 'user', text: finalUserText });
         }
         void saveMessage(userMsg);
-        // First real user reply this session — tick the streak (calendar-day,
-        // local). Fire-and-forget, never blocks the conversation.
-        if (!streakTickedThisSession) {
-          streakTickedThisSession = true;
-          void tickStreak();
-        }
         // Hold the user's words on screen for a beat (thinking dots beneath, since
         // we're still 'processing') before Camille's reply lands. The server returns
         // both in one round-trip, so without this they'd appear in the same frame.
@@ -703,6 +696,11 @@ export function useTurnEngine(online: boolean): TurnEngine {
         estimateSpeechMs(response.transcript.length) +
         estimateSpeechMs(response.speechText.length);
       useSubscriptionStore.getState().recordTurnElapsed(convoMs);
+      // Same time also feeds the daily-streak ledger: bank today's seconds, then
+      // recompute the streak (a day counts once it crosses 10 min). Fire-and-forget.
+      void addDailyActivity(todayLocal(), Math.round(convoMs / 1000)).then(() =>
+        refreshStreakFromHistory(),
+      );
     };
 
     /** Funnel for the end of a user turn — fired by the recognizer's `end` event. */

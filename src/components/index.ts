@@ -6,3 +6,4 @@ export type { WaveformMode } from './Waveform';
 export { MicButton } from './MicButton';
 export { ThinkingIndicator } from './ThinkingIndicator';
 export { SignInNudge } from './SignInNudge';
+export { StreakChip } from './StreakChip';

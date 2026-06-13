@@ -106,10 +106,15 @@ export type TurnState =
   | 'recording'
   | 'processing';
 
+/** Identifier of a curated chat colour theme (see THEMES in `@/lib/theme`). */
+export type ChatThemeId = 'sand' | 'ember' | 'violet' | 'supernova';
+
 /** User-adjustable settings (spec §4.5). */
 export interface Settings {
   speechSpeed: SpeechSpeed;
   voice: MarieVoiceId;
   micSensitivity: 'auto' | 'manual';
   haptics: boolean;
+  /** Chosen chat colour theme; light/dark is still driven by the device. */
+  chatTheme: ChatThemeId;
 }

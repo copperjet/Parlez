@@ -1,19 +1,18 @@
 /**
- * Calendar-day practice streak — a tiny engagement counter that surfaces only
- * on the settings screen (CLAUDE.md "no gamification" rule is intentionally
- * relaxed for this single, off-screen indicator).
+ * Practice streak + money-back guarantee maths.
  *
- * Pure helpers + one stateful `tickStreak()` that reads the kv store, computes
- * the next value, and persists it. The conversation screen calls `tickStreak`
- * once per session mount — never blocking Marie's reply.
+ * A day counts as "complete" once the user has practised {@link DAILY_GOAL_SECONDS}
+ * (10 minutes) that day. Per-day practice seconds live in the `daily_activity`
+ * table; the streak is the run of consecutive complete days ending today (or
+ * yesterday, so a streak survives until the day actually lapses).
+ *
+ * Pure helpers + `refreshStreakFromHistory()` which recomputes from the table and
+ * mirrors the result into the store. Best-effort — never blocks Marie's reply.
  */
-import { saveStreak } from '@/lib/db/sessions';
+import { DAILY_GOAL_SECONDS, GUARANTEE_DAYS, GUARANTEE_WINDOW_DAYS } from '@/lib/constants';
+import { loadDailyActivity, saveStreak } from '@/lib/db/sessions';
 import { useAppStore } from '@/stores/appStore';
-
-export interface StreakState {
-  count: number;
-  date: string;
-}
+import type { ImageSourcePropType } from 'react-native';
 
 /**
  * Today's date as `YYYY-MM-DD` in the device's local timezone.
@@ -26,7 +25,7 @@ export function todayLocal(now: Date = new Date()): string {
 }
 
 /** ISO `YYYY-MM-DD` date arithmetic without pulling in a date library. */
-function addDays(iso: string, days: number): string {
+export function addDays(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return iso;
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -35,6 +34,16 @@ function addDays(iso: string, days: number): string {
   const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(dt.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+/** Whole days from `a` to `b` (b - a). Negative if b is before a. */
+export function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  if (!ay || !by) return 0;
+  const da = Date.UTC(ay, am - 1, ad);
+  const db = Date.UTC(by, bm - 1, bd);
+  return Math.round((db - da) / 86_400_000);
 }
 
 /**
@@ -60,40 +69,184 @@ export function dueSignInMilestone(streak: number, dismissedAt: number): number 
   return due;
 }
 
-/**
- * Pure streak step.
- *   no prev          → {1, today}
- *   prev = today     → unchanged
- *   prev = yesterday → {prev.count + 1, today}
- *   else             → {1, today}   (miss = reset)
- */
-export function computeNextStreak(
-  prev: StreakState | null,
-  today: string,
-): StreakState {
-  if (!prev || prev.count <= 0) return { count: 1, date: today };
-  if (prev.date === today) return prev;
-  if (prev.date === addDays(today, -1)) {
-    return { count: prev.count + 1, date: today };
-  }
-  return { count: 1, date: today };
+/** Set of `YYYY-MM-DD` dates that met the daily goal. */
+export function completedDays(
+  activity: { date: string; seconds: number }[],
+  goal = DAILY_GOAL_SECONDS,
+): Set<string> {
+  return new Set(activity.filter((a) => a.seconds >= goal).map((a) => a.date));
 }
 
 /**
- * Read current streak from the store, compute the next value, persist it, and
- * update the store. Best-effort — must never throw into the turn engine.
+ * Consecutive complete days ending at today, or at yesterday if today isn't done
+ * yet (the streak is still "alive" until the gap reaches two days).
  */
-export async function tickStreak(): Promise<void> {
+export function computeStreak(completed: Set<string>, today = todayLocal()): number {
+  let anchor: string | null = null;
+  if (completed.has(today)) anchor = today;
+  else if (completed.has(addDays(today, -1))) anchor = addDays(today, -1);
+  if (!anchor) return 0;
+
+  let n = 0;
+  let d = anchor;
+  while (completed.has(d)) {
+    n += 1;
+    d = addDays(d, -1);
+  }
+  return n;
+}
+
+// ── Flame tiers ──────────────────────────────────────────────────────────────
+
+export type FlameTierId = 'orange' | 'ember' | 'violet' | 'supernova';
+
+export interface FlameTier {
+  id: FlameTierId;
+  label: string;
+  /** Smallest streak that reaches this tier. */
+  minStreak: number;
+  image: ImageSourcePropType;
+  /** Representative accent for glow / progress UI. */
+  color: string;
+}
+
+/** Streak → flame tier. Hotter flames (violet, blue) reward longer streaks. */
+export const FLAME_TIERS: FlameTier[] = [
+  {
+    id: 'orange',
+    label: 'Getting warm',
+    minStreak: 1,
+    image: require('../../assets/images/streak - orange.png'),
+    color: '#F0801E',
+  },
+  {
+    id: 'ember',
+    label: 'On fire',
+    minStreak: 7,
+    image: require('../../assets/images/streak - classic ember.png'),
+    color: '#F0532A',
+  },
+  {
+    id: 'violet',
+    label: 'Unstoppable',
+    minStreak: 14,
+    image: require('../../assets/images/streak - cosmic violet.png'),
+    color: '#9A4FD6',
+  },
+  {
+    id: 'supernova',
+    label: 'Supernova',
+    minStreak: 30,
+    image: require('../../assets/images/streak-supanova blue.png'),
+    color: '#2E9BE6',
+  },
+];
+
+/** The flame tier for a given streak length (the highest one reached). */
+export function flameTierFor(streak: number): FlameTier {
+  let tier = FLAME_TIERS[0];
+  for (const t of FLAME_TIERS) {
+    if (streak >= t.minStreak) tier = t;
+  }
+  return tier;
+}
+
+/** The next tier above the current streak, or null once at the top. */
+export function nextFlameTier(streak: number): FlameTier | null {
+  for (const t of FLAME_TIERS) {
+    if (streak < t.minStreak) return t;
+  }
+  return null;
+}
+
+// ── Money-back guarantee ─────────────────────────────────────────────────────
+
+export interface GuaranteeProgress {
+  /** Longest run of consecutive complete days inside the guarantee window. */
+  bestRun: number;
+  /** Days still required to qualify. */
+  remaining: number;
+  /** GUARANTEE_DAYS — total consecutive days needed. */
+  needed: number;
+  /** Calendar days left in the guarantee window (0 once it closes). */
+  daysLeft: number;
+  /** Window still open (within GUARANTEE_WINDOW_DAYS of first launch). */
+  windowOpen: boolean;
+  /** Met the consecutive-day requirement while the window was/is valid. */
+  eligible: boolean;
+}
+
+/**
+ * Progress toward the 20-consecutive-day money-back guarantee. Only complete
+ * days that fall inside the [firstLaunch, firstLaunch + window] range count.
+ */
+export function guaranteeProgress(
+  completed: Set<string>,
+  firstLaunchDate: string | null,
+  today = todayLocal(),
+): GuaranteeProgress {
+  const needed = GUARANTEE_DAYS;
+  const base: GuaranteeProgress = {
+    bestRun: 0,
+    remaining: needed,
+    needed,
+    daysLeft: 0,
+    windowOpen: false,
+    eligible: false,
+  };
+  if (!firstLaunchDate) return base;
+
+  const elapsed = daysBetween(firstLaunchDate, today);
+  const daysLeft = Math.max(0, GUARANTEE_WINDOW_DAYS - elapsed);
+  const windowOpen = elapsed >= 0 && elapsed < GUARANTEE_WINDOW_DAYS;
+
+  // Longest consecutive run of complete days across the whole window range.
+  let bestRun = 0;
+  let run = 0;
+  for (let i = 0; i < GUARANTEE_WINDOW_DAYS; i += 1) {
+    const d = addDays(firstLaunchDate, i);
+    if (completed.has(d)) {
+      run += 1;
+      if (run > bestRun) bestRun = run;
+    } else {
+      run = 0;
+    }
+  }
+
+  return {
+    bestRun,
+    remaining: Math.max(0, needed - bestRun),
+    needed,
+    daysLeft,
+    windowOpen,
+    eligible: bestRun >= needed,
+  };
+}
+
+/**
+ * Recompute the streak from the daily-activity table and mirror it into the
+ * store + kv. Called after each turn's practice time is recorded. Best-effort
+ * and a no-op when there's no persisted activity (e.g. web), so it never clobbers
+ * an in-memory streak with a phantom zero.
+ */
+export async function refreshStreakFromHistory(): Promise<void> {
   try {
+    const activity = await loadDailyActivity();
+    if (activity.length === 0) return;
+    const completed = completedDays(activity);
     const today = todayLocal();
+    const streak = computeStreak(completed, today);
+
     const s = useAppStore.getState();
-    const prev: StreakState | null = s.lastSessionDate
-      ? { count: s.streakCount, date: s.lastSessionDate }
-      : null;
-    const next = computeNextStreak(prev, today);
-    if (prev && prev.count === next.count && prev.date === next.date) return;
-    s.setStreak(next.count, next.date);
-    await saveStreak(next.count, next.date);
+    if (s.streakCount === streak) return;
+
+    const lastDate = completed.has(today)
+      ? today
+      : completed.has(addDays(today, -1))
+        ? addDays(today, -1)
+        : s.lastSessionDate;
+    s.setStreak(streak, lastDate ?? null);
+    await saveStreak(streak, lastDate ?? null);
   } catch {
     // Best-effort — streak is UX polish, never blocks Marie.
   }

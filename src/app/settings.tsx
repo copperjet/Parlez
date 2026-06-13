@@ -18,8 +18,8 @@ import {
   saveSettings,
   saveTurnsSinceConsolidation,
 } from '@/lib/db/sessions';
-import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
-import type { Settings as AppSettings } from '@/lib/types';
+import { FontSize, Radius, Spacing, THEME_OPTIONS, useTheme } from '@/lib/theme';
+import type { ChatThemeId, Settings as AppSettings } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
 import { useAuthStore } from '@/stores/authStore';
 import { planSummary, useSubscriptionStore } from '@/stores/subscriptionStore';
@@ -161,11 +161,53 @@ export default function Settings() {
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>
-        <Row label="Streak">
-          <Text style={[styles.streakValue, { color: colors.text }]}>
-            {streakCount > 0 ? `Day ${streakCount}` : '—'}
-          </Text>
-        </Row>
+        <Pressable
+          onPress={() => router.push('/streak' as never)}
+          accessibilityRole="button"
+          style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Streak</Text>
+          <View style={styles.linkRight}>
+            <Text style={[styles.streakValue, { color: colors.text }]}>
+              {streakCount > 0 ? `${streakCount} ${streakCount === 1 ? 'day' : 'days'}` : '—'}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          </View>
+        </Pressable>
+
+        <View style={[styles.themeBlock, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Chat theme</Text>
+          <View style={styles.swatches}>
+            {THEME_OPTIONS.map((t) => {
+              const active = t.id === settings.chatTheme;
+              return (
+                <Pressable
+                  key={t.id}
+                  onPress={() => change({ chatTheme: t.id as ChatThemeId })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t.label} theme`}
+                  accessibilityState={{ selected: active }}
+                  hitSlop={6}
+                  style={styles.swatchCol}>
+                  <View
+                    style={[
+                      styles.swatch,
+                      { backgroundColor: t.swatch, borderColor: colors.background },
+                      active && { borderColor: colors.text },
+                    ]}>
+                    {active ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
+                  </View>
+                  <Text
+                    style={[
+                      styles.swatchLabel,
+                      { color: active ? colors.text : colors.textSecondary },
+                    ]}>
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
         <Row label="Speech speed">
           <Segmented
@@ -293,4 +335,20 @@ const styles = StyleSheet.create({
   clearRow: { paddingVertical: Spacing.xl, alignItems: 'center' },
   clearText: { fontSize: FontSize.body, fontWeight: '600' },
   streakValue: { fontSize: FontSize.body, fontWeight: '600' },
+  themeBlock: {
+    paddingVertical: Spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.md,
+  },
+  swatches: { flexDirection: 'row', justifyContent: 'space-between' },
+  swatchCol: { alignItems: 'center', gap: Spacing.xs, flex: 1 },
+  swatch: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.pill,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swatchLabel: { fontSize: FontSize.caption, fontWeight: '600' },
 });

@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voice: 'camille',
   micSensitivity: 'auto',
   haptics: true,
+  chatTheme: 'sand',
 };
 
 interface AppStore {
@@ -79,6 +80,16 @@ interface AppStore {
   streakCount: number;
   lastSessionDate: string | null;
 
+  /**
+   * First-launch date (YYYY-MM-DD local) — anchors the money-back guarantee
+   * window. Set once on the first hydrate that finds none; never reset by a
+   * memory clear.
+   */
+  firstLaunchDate: string | null;
+
+  /** True only for genuine first-time installs — gates the money-back tracker. */
+  isFirstTimeUser: boolean;
+
   /** Counter that gates the next LLM consolidation pass. */
   turnsSinceConsolidation: number;
 
@@ -104,6 +115,8 @@ interface AppStore {
     interests: string[];
     streakCount: number;
     lastSessionDate: string | null;
+    firstLaunchDate: string | null;
+    isFirstTimeUser: boolean;
     turnsSinceConsolidation: number;
   }) => void;
   completeOnboarding: (choice: OnboardingChoice) => void;
@@ -151,6 +164,8 @@ export const useAppStore = create<AppStore>((set) => ({
   interests: [],
   streakCount: 0,
   lastSessionDate: null,
+  firstLaunchDate: null,
+  isFirstTimeUser: true,
   turnsSinceConsolidation: 0,
   gapSinceLastSession: null,
   sessionEpoch: 0,
@@ -169,6 +184,8 @@ export const useAppStore = create<AppStore>((set) => ({
       interests: state.interests,
       streakCount: state.streakCount,
       lastSessionDate: state.lastSessionDate,
+      firstLaunchDate: state.firstLaunchDate,
+      isFirstTimeUser: state.isFirstTimeUser,
       turnsSinceConsolidation: state.turnsSinceConsolidation,
     }),
 
