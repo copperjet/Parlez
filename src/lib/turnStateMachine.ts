@@ -640,10 +640,13 @@ export function useTurnEngine(online: boolean): TurnEngine {
         return;
       }
 
-      // Echo guard: if Scribe's transcript matches Camille's last message, the mic
+      // Echo guard: if the transcript matches Camille's last message, the mic
       // captured speaker output (barge-in or quick tap after TTS). Silently discard
       // the turn and re-listen rather than echoing her words back as user speech.
-      if (response.transcript && scribeAuthoritative) {
+      // Applies to any VOICE turn — Scribe audio path (scribeAuthoritative) OR the
+      // streaming path (sttMs present) — but never a typed turn.
+      const voiceTurn = scribeAuthoritative || (input.sttMs != null && input.sttMs > 0);
+      if (response.transcript && voiceTurn) {
         const msgs = store().messages;
         let lastMarieText = '';
         for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -907,16 +910,25 @@ export function useTurnEngine(online: boolean): TurnEngine {
               if (__DEV__) console.warn('[stream]', e.message);
             },
           });
-          if (!alive) {
+          // Token fetch + WS open take time. If the user cancelled meanwhile
+          // (turnOff → idle/grace) or the engine unmounted, don't leave the socket
+          // + recorder running — tear down and bail.
+          if (!alive || !listening()) {
             abortStreaming();
             return;
           }
           streaming = true;
           awaitingEnd = true;
           pollTimer = setInterval(pollTick, POLL_MS);
-          const delay =
-            silenceRound === 0 ? SILENCE_PROMPT_MS : SILENCE_CONTINUE_MS;
-          silenceTimer = setTimeout(() => void onSilence(), delay);
+          // Audio capture starts inside startStreaming, so a chunk may have already
+          // fired markVoice (→ speechStartAt set, silence timer cleared) during the
+          // await. Only arm the silence prompt if no voice has been detected yet,
+          // or we'd re-arm a timer that fires mid-speech.
+          if (speechStartAt == null) {
+            const delay =
+              silenceRound === 0 ? SILENCE_PROMPT_MS : SILENCE_CONTINUE_MS;
+            silenceTimer = setTimeout(() => void onSilence(), delay);
+          }
           return;
         } catch (e) {
           // Streaming unavailable this turn — clean up and use the recognizer.

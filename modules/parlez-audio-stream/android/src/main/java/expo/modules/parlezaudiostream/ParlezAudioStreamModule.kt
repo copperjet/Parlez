@@ -4,7 +4,6 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Base64
-import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import kotlin.concurrent.thread
@@ -52,7 +51,7 @@ class ParlezAudioStreamModule : Module() {
 
     val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding)
     if (minBuf <= 0) {
-      throw Exceptions.MissingPermission("RECORD_AUDIO")
+      throw IllegalStateException("AudioRecord buffer size unavailable")
     }
     val bufferSize = maxOf(minBuf, chunkSamples * 2 * 4)
 

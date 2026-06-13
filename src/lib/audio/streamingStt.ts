@@ -8,8 +8,8 @@
  * it commits, waits briefly for the final committed transcript, and returns it as
  * the authoritative text (no audio upload, no server STT round-trip).
  *
- * Android-only for now (the native capture module is a stub on iOS); offline /
- * iOS / any failure here makes `isStreamingSttAvailable()` false or `start`
+ * Android-only for now (the native capture module isn't compiled on iOS); offline
+ * / iOS / any failure here makes `isStreamingSttAvailable()` false or `start`
  * reject, so the turn engine falls back to the device speech recognizer.
  */
 import { Platform } from 'react-native';
@@ -112,9 +112,13 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
   committedText = '';
   lastPartial = '';
   committedResolve = null;
+  // Omit language_code → automatic multilingual EN/FR code-switch detection.
+  // We don't request include_language_detection / include_timestamps: we only
+  // need the plain committed text, and enabling them can emit a second committed
+  // message variant per commit (which would double-count the transcript below).
   const url =
     `${WS_BASE}?model_id=${encodeURIComponent(REALTIME_MODEL)}` +
-    `&audio_format=pcm_16000&commit_strategy=manual&include_language_detection=true` +
+    `&audio_format=pcm_16000&commit_strategy=manual` +
     `&token=${encodeURIComponent(token)}`;
   const socket = new WebSocket(url);
   ws = socket;
@@ -134,8 +138,9 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
         break;
       case 'committed_transcript':
       case 'committed_transcript_with_timestamps':
-        committedText = (committedText ? `${committedText} ` : '') + (msg.text ?? '');
-        committedText = committedText.trim();
+        // We commit once at turn end (manual strategy), so this is the single
+        // final. Replace (not append) so a duplicate variant can't double-count.
+        committedText = (msg.text ?? '').trim() || committedText;
         if (committedResolve) {
           committedResolve(committedText);
           committedResolve = null;
