@@ -37,6 +37,10 @@ yarn-error.*
 # EAS local credentials (never commit)
 credentials.json
 upload-keystore.jks
+# keystore backups (plaintext credentials — never commit)
+*keystore-backup/
+*keystore-credentials*
+play-service-account.json
 
 # typescript
 *.tsbuildinfo

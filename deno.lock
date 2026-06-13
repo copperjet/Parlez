@@ -25,6 +25,7 @@
         "npm:expo-constants@~56.0.14",
         "npm:expo-crypto@~56.0.4",
         "npm:expo-device@~56.0.4",
+        "npm:expo-file-system@~56.0.8",
         "npm:expo-font@~56.0.5",
         "npm:expo-glass-effect@~56.0.4",
         "npm:expo-haptics@~56.0.3",
