@@ -30,6 +30,7 @@ import {
 import {
   abortStreaming,
   isStreamingSttAvailable,
+  prepareStreaming,
   startStreaming,
   stopStreaming,
   VOICE_RMS_FLOOR,
@@ -424,6 +425,13 @@ export function useTurnEngine(online: boolean): TurnEngine {
 
       s.setTurnState('marie_speaking');
       interruptedDuringSpeak = false;
+
+      // Pre-warm the streaming socket now, while Camille speaks. Minting the token
+      // + opening the WebSocket takes ~1–3s; doing it here (in parallel with TTS
+      // synth + playback) means the mic starts capturing instantly when the user's
+      // turn begins, instead of stalling at the start of the listen. Fire-and-forget
+      // and self-guarded (no-op offline / iOS / already open).
+      if (onlineRef.current) prepareStreaming();
 
       let speech: SynthesizedSpeech;
       try {

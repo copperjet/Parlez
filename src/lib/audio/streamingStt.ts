@@ -56,6 +56,9 @@ export interface StreamingResult {
 }
 
 let ws: WebSocket | null = null;
+let wsReady = false;
+/** In-flight pre-warm (token + socket), so startStreaming can await it. */
+let preparing: Promise<void> | null = null;
 let chunkSub: { remove(): void } | null = null;
 let startedAt = 0;
 let committedText = '';
@@ -103,6 +106,59 @@ function closeWs(): void {
     }
   }
   ws = null;
+  wsReady = false;
+}
+
+/**
+ * Open the realtime socket (mint token + connect), WITHOUT attaching transcript
+ * handlers or starting capture. The slow part (HTTP token mint + WS handshake,
+ * ~1–3s) — split out so it can be pre-warmed during Camille's speech so the mic
+ * starts instantly when the user's turn begins.
+ */
+async function openSocket(): Promise<void> {
+  _diag = 'stream: token…';
+  const appUserId = await getCallerId();
+  const qs = appUserId ? `?app_user_id=${encodeURIComponent(appUserId)}` : '';
+  const tokenRes = await fetch(`${functionsBase()}/stt-token${qs}`, {
+    method: 'GET',
+    headers: await authHeaders(),
+  });
+  if (!tokenRes.ok) {
+    throw new Error(`stt-token ${tokenRes.status}: ${(await tokenRes.text()).slice(0, 120)}`);
+  }
+  const { token } = (await tokenRes.json()) as { token?: string };
+  if (!token) throw new Error('stt-token returned no token');
+
+  // commit_strategy=manual so OUR turn-end logic drives the commit; no
+  // language_code → automatic multilingual EN/FR code-switch detection.
+  const url =
+    `${WS_BASE}?model_id=${encodeURIComponent(REALTIME_MODEL)}` +
+    `&audio_format=pcm_16000&commit_strategy=manual` +
+    `&token=${encodeURIComponent(token)}`;
+  const socket = new WebSocket(url);
+  ws = socket;
+  _diag = 'stream: ws…';
+  await waitForOpen(socket);
+  wsReady = true;
+  _diag = 'stream: ws ready';
+}
+
+/**
+ * Pre-warm the socket so the next listen starts capturing immediately. Safe to
+ * call repeatedly and fire-and-forget; no-op if a socket is already open or
+ * opening. Call this while Camille is speaking to hide the handshake latency.
+ */
+export function prepareStreaming(): void {
+  if (!isStreamingSttAvailable()) return;
+  if (preparing || (ws && wsReady)) return;
+  preparing = openSocket()
+    .catch(() => {
+      // Pre-warm failed — leave it; startStreaming will open on demand (or fall back).
+      closeWs();
+    })
+    .finally(() => {
+      preparing = null;
+    });
 }
 
 /**
@@ -117,41 +173,24 @@ export async function startStreaming(handlers: StreamingHandlers): Promise<void>
   }
 
   try {
-    // 1. Mint a single-use token (entitlement-gated server-side).
-    _diag = 'stream: token…';
-    const appUserId = await getCallerId();
-    const qs = appUserId ? `?app_user_id=${encodeURIComponent(appUserId)}` : '';
-    const tokenRes = await fetch(`${functionsBase()}/stt-token${qs}`, {
-      method: 'GET',
-      headers: await authHeaders(),
-    });
-    if (!tokenRes.ok) {
-      throw new Error(`stt-token ${tokenRes.status}: ${(await tokenRes.text()).slice(0, 120)}`);
+    // Reuse a pre-warmed socket if one is open (or finishing opening); otherwise
+    // open on demand. This is where the per-turn handshake latency is hidden when
+    // prepareStreaming() ran during Camille's speech.
+    if (preparing) {
+      await preparing;
     }
-    const { token } = (await tokenRes.json()) as { token?: string };
-    if (!token) throw new Error('stt-token returned no token');
+    if (!ws || !wsReady || ws.readyState !== 1 /* OPEN */) {
+      closeWs();
+      await openSocket();
+    }
+    const socket = ws;
+    if (!socket) throw new Error('socket unavailable');
 
-  // 2. Open the realtime socket. commit_strategy=manual so OUR turn-end logic
-  // (mic tap / silence auto-stop) drives the commit; no language_code → auto
-  // multilingual EN/FR detection.
-  committedText = '';
-  lastPartial = '';
-  committedResolve = null;
-  // Omit language_code → automatic multilingual EN/FR code-switch detection.
-  // We don't request include_language_detection / include_timestamps: we only
-  // need the plain committed text, and enabling them can emit a second committed
-  // message variant per commit (which would double-count the transcript below).
-  const url =
-    `${WS_BASE}?model_id=${encodeURIComponent(REALTIME_MODEL)}` +
-    `&audio_format=pcm_16000&commit_strategy=manual` +
-    `&token=${encodeURIComponent(token)}`;
-  const socket = new WebSocket(url);
-  ws = socket;
-  _diag = 'stream: ws…';
-  await waitForOpen(socket);
-  _diag = 'stream: ws open';
+    committedText = '';
+    lastPartial = '';
+    committedResolve = null;
 
-  socket.onmessage = (ev: { data: string }) => {
+    socket.onmessage = (ev: { data: string }) => {
     let msg: { message_type?: string; text?: string; error?: string };
     try {
       msg = JSON.parse(ev.data);
