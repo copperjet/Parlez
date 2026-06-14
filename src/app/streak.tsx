@@ -145,7 +145,7 @@ export default function Streak() {
           {/* Flame art sits on a white disc in both modes — reads as a warm glow
               rather than a stray box. An active streak gets the animated flame so
               it literally burns; a cold streak shows a dimmed static ember. */}
-          <View style={[styles.flameWrap, !flameDim && { borderColor: tier.color }]}>
+          <View style={[styles.flameWrap, !flameDim && { borderColor: colors.accent }]}>
             {flameDim ? (
               <Image
                 source={tier.image}
@@ -161,7 +161,7 @@ export default function Streak() {
               />
             )}
           </View>
-          <Text style={[styles.count, { color: tier.color }]}>{streakNow}</Text>
+          <Text style={[styles.count, { color: colors.accent }]}>{streakNow}</Text>
           <Text style={[styles.countLabel, { color: colors.text }]}>
             {streakNow === 1 ? 'day in a row' : 'days in a row'}
           </Text>
@@ -264,8 +264,8 @@ export default function Streak() {
                   <View
                     style={[
                       styles.dayDot,
-                      done && { backgroundColor: tier.color },
-                      isToday && !done && { borderWidth: 2, borderColor: tier.color },
+                      done && { backgroundColor: colors.accent },
+                      isToday && !done && { borderWidth: 2, borderColor: colors.accent },
                       !done && !isToday && { backgroundColor: colors.surfaceMuted },
                     ]}>
                     {done && isToday ? (
@@ -273,7 +273,7 @@ export default function Streak() {
                     ) : done ? (
                       <Ionicons name="checkmark" size={16} color="#FFFFFF" />
                     ) : isToday ? (
-                      <Ionicons name="flame-outline" size={17} color={tier.color} />
+                      <Ionicons name="flame-outline" size={17} color={colors.accent} />
                     ) : (
                       <Text
                         style={[

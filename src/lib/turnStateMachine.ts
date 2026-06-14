@@ -248,13 +248,24 @@ export function useTurnEngine(online: boolean): TurnEngine {
     const phase = () => store().turnState;
     const listening = () => phase() === 'listening' || phase() === 'recording';
 
-    const buildContext = (): TurnContext => {
+    const buildContext = (opts?: { excludeLastUser?: boolean }): TurnContext => {
       const s = store();
+      // The retry path (empty reply) re-sends the user's transcript as a fresh
+      // turn AFTER it was already reconciled into s.messages. Including it in the
+      // history too would hand Claude the same user message twice in a row — which
+      // itself provokes a confused/empty reply, so the retry never recovers and we
+      // fall through to the false "technical glitch" apology. Drop the trailing
+      // user message so the retry's shape matches the original call.
+      let history = [...s.priorHistory, ...s.messages];
+      if (opts?.excludeLastUser) {
+        const last = history[history.length - 1];
+        if (last && last.speaker === 'user') history = history.slice(0, -1);
+      }
       return {
         level: s.level,
         profileSummary: s.profileSummary,
         // Prior-session transcript feeds the AI but is never shown (spec §3.2).
-        history: [...s.priorHistory, ...s.messages],
+        history,
         gapSinceLastSession: s.gapSinceLastSession,
         personaName: voiceName(s.settings.voice),
         learnerName: s.learnerName ?? null,
@@ -701,7 +712,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         try {
           const retry = await store().service.sendTurn(
             { audioUri: null, text: finalUserText, sttMs: input.sttMs ?? null },
-            buildContext(),
+            buildContext({ excludeLastUser: true }),
           );
           if (retry && retry.speechText.trim()) response = retry;
         } catch {

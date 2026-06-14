@@ -7,6 +7,8 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Linking,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   StyleSheet,
@@ -94,9 +96,30 @@ function ConversationSession() {
   }, [sttUnavailable]);
 
   const listRef = useRef<FlatList<Message>>(null);
+  // Auto-scroll only when the user is already pinned to the bottom. Without this
+  // gate, every content-size change (a reply landing, the pending bubble growing,
+  // a re-measure on app re-open) yanked the list back to the end — so the user
+  // could never scroll up to read history, and re-opening the app snapped/glitched
+  // to the latest message. We track whether they're near the bottom and respect it.
+  const atBottomRef = useRef(true);
+  const didInitialScrollRef = useRef(false);
   const scrollToEnd = useCallback(() => {
-    listRef.current?.scrollToEnd({ animated: true });
+    // First settle on open is instant (no animated jump → no re-open glitch);
+    // subsequent appends animate, but only while the user is pinned to the bottom.
+    if (!atBottomRef.current && didInitialScrollRef.current) return;
+    const animated = didInitialScrollRef.current;
+    didInitialScrollRef.current = true;
+    listRef.current?.scrollToEnd({ animated });
   }, []);
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      const distanceFromBottom =
+        contentSize.height - (contentOffset.y + layoutMeasurement.height);
+      atBottomRef.current = distanceFromBottom < 80;
+    },
+    [],
+  );
 
   const renderItem = useCallback(
     ({ item }: { item: Message }) => <MessageRow message={item} onReplay={replay} />,
@@ -190,6 +213,8 @@ function ConversationSession() {
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
           onContentSizeChange={scrollToEnd}
+          onScroll={onScroll}
+          scrollEventThrottle={64}
           style={styles.listFlex}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}

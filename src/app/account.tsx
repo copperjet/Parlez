@@ -77,7 +77,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 export default function Account() {
-  const { colors } = useTheme();
+  const { colors, mode } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -450,7 +450,7 @@ export default function Account() {
                 <AppleAuthentication.AppleAuthenticationButton
                   buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
                   buttonStyle={
-                    colors.background === '#15130F'
+                    mode === 'dark'
                       ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
                       : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
                   }
