@@ -241,6 +241,17 @@ function parseAi(text: string): AiResult {
       }
     }
   }
+  // Last-ditch salvage: the model ignored the JSON format entirely and answered
+  // in plain prose — no parseable object, no "speechText" field to extract. Use
+  // that prose as what Camille says rather than emitting an empty turn (→ false
+  // technical-glitch apology). Guarded so a broken/partial JSON body (which the
+  // branches above own) is never dumped to the user as raw text.
+  if (typeof parsed.speechText !== 'string' || !parsed.speechText.trim()) {
+    const stripped = text.replace(/```[a-z]*\n?|```/gi, '').trim();
+    if (stripped && !stripped.startsWith('{') && !stripped.includes('"speechText"')) {
+      parsed.speechText = stripped.slice(0, 600);
+    }
+  }
   const segments = Array.isArray(parsed.segments)
     ? (parsed.segments as unknown[])
         .map((s) => {
@@ -296,6 +307,18 @@ interface ClaudeResult {
   usage: ClaudeUsage;
 }
 
+/** Sum two Claude usage records so a retried turn bills both API calls. */
+function mergeUsage(a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage {
+  return {
+    input_tokens: (a.input_tokens ?? 0) + (b.input_tokens ?? 0),
+    output_tokens: (a.output_tokens ?? 0) + (b.output_tokens ?? 0),
+    cache_read_input_tokens:
+      (a.cache_read_input_tokens ?? 0) + (b.cache_read_input_tokens ?? 0),
+    cache_creation_input_tokens:
+      (a.cache_creation_input_tokens ?? 0) + (b.cache_creation_input_tokens ?? 0),
+  };
+}
+
 /** Claude generates Marie's structured response (spec §5, §7.5). */
 async function generate(
   ctx: PromptContext,
@@ -329,6 +352,12 @@ async function generate(
       // from a truncated body as a backstop. Billed on actual output, so the
       // higher ceiling only costs more when a reply genuinely needs it.
       max_tokens: 1500,
+      // Default sampling temperature is 1.0, which makes Haiku occasionally emit
+      // malformed or empty JSON even for an input it understood — surfacing to the
+      // user as the false "petit problème technique" apology. The reply is a
+      // structured object, not creative prose, so a lower temperature sharply cuts
+      // format slips while keeping Camille's tone natural.
+      temperature: 0.5,
       system: [
         {
           type: 'text',
@@ -620,7 +649,16 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { ai, usage } = await generate(ctx, mode, simpler, transcript);
+    let { ai, usage } = await generate(ctx, mode, simpler, transcript);
+    // Empty-reply guard: despite the lower temperature and the parseAi salvage,
+    // Haiku can still return an empty speechText for a turn it understood. Rather
+    // than ship that (→ the client's false "petit problème technique" apology),
+    // retry once here — same region, no extra client round-trip. Bill both calls.
+    if (!ai.speechText.trim()) {
+      const retry = await generate(ctx, mode, simpler, transcript);
+      usage = mergeUsage(usage, retry.usage);
+      if (retry.ai.speechText.trim()) ai = retry.ai;
+    }
 
     if (caller) {
       logUsage({
