@@ -57,7 +57,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "deploy:functions": "supabase functions deploy --project-ref xfwqikixqqgzxsxgxxqn",
+    "deploy:delete-account": "supabase functions deploy delete-account --no-verify-jwt --project-ref xfwqikixqqgzxsxgxxqn"
   },
   "private": true
 }

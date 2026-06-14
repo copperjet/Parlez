@@ -9,7 +9,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { SPEECH_SPEEDS, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
-import { ENV, functionsBase } from '@/lib/env';
+import { ENV, functionsBase, useSupabaseService } from '@/lib/env';
 import { getCallerId } from '@/lib/revenuecat';
 import { supabase } from '@/lib/supabase';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
@@ -78,6 +78,39 @@ export async function authHeaders(): Promise<Record<string, string>> {
     apikey: ENV.supabaseAnonKey,
     Authorization: `Bearer ${token}`,
   };
+}
+
+/**
+ * Server-side account deletion (Play data-safety + GDPR). Calls the
+ * `delete-account` Edge Function so the user's data is removed from our servers,
+ * not just locally: a signed-in user is resolved from their JWT (auth.users +
+ * RLS-scoped rows + the RevenueCat subscriber), and we always pass the
+ * RevenueCat appUserID so the anonymous path is covered too.
+ *
+ * Best-effort: resolves true on a 2xx, false otherwise — the caller still wipes
+ * local data and logs out regardless. MUST run BEFORE the local logout, which
+ * invalidates the session token this relies on.
+ */
+export async function deleteAccountOnServer(): Promise<boolean> {
+  if (!useSupabaseService || !supabase) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+  try {
+    const headers = await authHeaders();
+    const appUserId = await getCallerId();
+    const res = await fetch(`${functionsBase()}/delete-account`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(appUserId ? { appUserId } : {}),
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    // Network/timeout/abort — local wipe + logout still proceed in the caller.
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 

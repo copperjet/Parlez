@@ -24,13 +24,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { PurchasesPackage } from 'react-native-purchases';
 
+import { PRIVACY_POLICY_URL, TERMS_URL } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 type TierId = 'monthly' | 'annual' | 'lifetime';
 
-const TERMS_URL = 'https://codarti.com/parlez/terms';
-const PRIVACY_URL = 'https://codarti.com/parlez/privacy';
+const PRIVACY_URL = PRIVACY_POLICY_URL;
 
 /**
  * Outcome guarantee shown under the CTA (spec: speak-or-refund). Annual and

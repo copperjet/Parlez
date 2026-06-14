@@ -12,16 +12,11 @@ import {
   clearStructuredProfile,
   saveProfileSummary,
 } from '@/lib/db/sessions';
-import { voiceName } from '@/lib/constants';
-import { ENV } from '@/lib/env';
+import { DELETE_ACCOUNT_URL, PRIVACY_POLICY_URL, voiceName } from '@/lib/constants';
+import { deleteAccountOnServer } from '@/lib/services/supabaseService';
 import { FontSize, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
-
-function deleteAccountUrl(): string {
-  const base = ENV.supabaseUrl.replace(/\/$/, '');
-  return base ? `${base}/functions/v1/delete-account` : 'https://parlez.app/delete-account';
-}
 
 const PRINCIPLES = [
   'Your voice audio is never stored. It is transcribed, then immediately discarded.',
@@ -49,7 +44,13 @@ export default function Privacy() {
         {
           text: 'Delete everything',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            // Server-side deletion FIRST, while we still hold the session token +
+            // RevenueCat id (the local logout below invalidates both). Best-effort:
+            // wipes auth.users + RLS rows + the RC subscriber so the data-safety
+            // promise ("removed from our servers") is actually met for signed-in
+            // and anonymous users alike.
+            await deleteAccountOnServer();
             resetAll();
             void clearMessages();
             void clearProfile();
@@ -57,8 +58,17 @@ export default function Privacy() {
             void clearStreak();
             void clearActivity();
             void saveProfileSummary('');
-            void useSubscriptionStore.getState().logOutAndReset();
-            router.back();
+            // Wait for the subscription/entitlement reset to land BEFORE routing.
+            // It flips the user to un-entitled, so the destination has to be the
+            // top-level gate, not router.back() into the live conversation: that
+            // remounted the turn engine and fired a paywall redirect underneath
+            // the still-open Settings/Privacy modals, wedging navigation and
+            // leaving the mic stuck blinking.
+            await useSubscriptionStore.getState().logOutAndReset();
+            // Tear down the whole modal stack, then hand control to the routing
+            // gate to cleanly re-resolve (onboarding / paywall / conversation).
+            router.dismissAll?.();
+            router.replace('/');
           },
         },
       ],
@@ -97,6 +107,17 @@ export default function Privacy() {
         ))}
 
         <Pressable
+          onPress={() => void WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL)}
+          accessibilityRole="link"
+          style={styles.policyRow}>
+          <Ionicons name="document-text-outline" size={18} color={colors.accent} />
+          <Text style={[styles.policyText, { color: colors.accent }]}>
+            Read the full privacy policy
+          </Text>
+          <Ionicons name="open-outline" size={16} color={colors.accent} />
+        </Pressable>
+
+        <Pressable
           onPress={confirmDelete}
           accessibilityRole="button"
           style={styles.deleteRow}>
@@ -106,7 +127,7 @@ export default function Privacy() {
         </Pressable>
 
         <Pressable
-          onPress={() => void WebBrowser.openBrowserAsync(deleteAccountUrl())}
+          onPress={() => void WebBrowser.openBrowserAsync(DELETE_ACCOUNT_URL)}
           accessibilityRole="button"
           style={styles.webDeleteRow}>
           <Text style={[styles.webDeleteText, { color: colors.textSecondary }]}>
@@ -133,6 +154,14 @@ const styles = StyleSheet.create({
   principle: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start' },
   tick: { marginTop: 1 },
   principleText: { flex: 1, fontSize: FontSize.body, lineHeight: FontSize.body * 1.45 },
+  policyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingTop: Spacing.lg,
+  },
+  policyText: { fontSize: FontSize.body, fontWeight: '600' },
   deleteRow: { paddingVertical: Spacing.xl, alignItems: 'center' },
   deleteText: { fontSize: FontSize.body, fontWeight: '600' },
   webDeleteRow: { paddingBottom: Spacing.lg, alignItems: 'center' },
