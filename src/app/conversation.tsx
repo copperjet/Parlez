@@ -6,6 +6,7 @@ import {
   BackHandler,
   FlatList,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -26,7 +27,7 @@ import {
   type WaveformMode,
 } from '@/components';
 import { PaywallGate } from '@/components/PaywallGate';
-import { voiceName } from '@/lib/constants';
+import { MIC_OFF_NOTICE, voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useNetwork } from '@/lib/useNetwork';
 import { useTurnEngine } from '@/lib/turnStateMachine';
@@ -136,6 +137,16 @@ function ConversationSession() {
       : null) ??
     (!online ? 'You’re offline — full conversation needs internet.' : null);
   const bannerIsError = errorNotice != null;
+  // The mic-permission notice is actionable: tapping it jumps straight to the OS
+  // app-settings page so the user can grant access without hunting for it.
+  const bannerIsMicPrompt = errorNotice === MIC_OFF_NOTICE;
+  const onBannerPress = () => {
+    if (bannerIsMicPrompt) {
+      void Linking.openSettings();
+      return;
+    }
+    if (bannerIsError) setErrorNotice(null);
+  };
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -148,7 +159,7 @@ function ConversationSession() {
 
       {banner ? (
         <Pressable
-          onPress={() => bannerIsError && setErrorNotice(null)}
+          onPress={onBannerPress}
           accessibilityRole={bannerIsError ? 'button' : 'text'}
           style={[
             styles.banner,

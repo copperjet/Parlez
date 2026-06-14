@@ -59,6 +59,7 @@ import {
   GRACE_MS,
   maxCorrectionsForLevel,
   MAX_LISTEN_MS,
+  MIC_OFF_NOTICE,
   MIN_SPEECH_MS,
   SILENCE_CONTINUE_MS,
   SILENCE_PROMPT_MS,
@@ -177,7 +178,7 @@ function isEchoOf(transcript: string, reference: string): boolean {
 
 function micFailureNotice(code: string | null, online: boolean): string {
   if (code === 'not-allowed' || code === 'service-not-allowed') {
-    return 'Microphone access is off — turn it on in Settings.';
+    return MIC_OFF_NOTICE;
   }
   if (code === 'network' && !online) {
     return 'You’re offline — voice needs a connection. Tap to retry.';
@@ -688,6 +689,38 @@ export function useTurnEngine(online: boolean): TurnEngine {
         await wait(USER_REPLY_BEAT_MS);
         if (!alive) return;
       }
+
+      // We heard the user — their words are already on screen — but the model
+      // returned an empty reply. That's a model/parse hiccup, NOT an STT miss, so
+      // never fall through to speak()'s "Je n'ai pas bien entendu, répète"
+      // fallback: that tells the user we didn't catch a message we clearly
+      // understood (the bug behind the duplicate re-prompts). Retry the turn once
+      // with the transcript we already have; if it's still empty, apologise for
+      // the technical glitch and re-listen.
+      if (finalUserText && !response.speechText.trim()) {
+        try {
+          const retry = await store().service.sendTurn(
+            { audioUri: null, text: finalUserText, sttMs: input.sttMs ?? null },
+            buildContext(),
+          );
+          if (retry && retry.speechText.trim()) response = retry;
+        } catch {
+          // Keep the honest apology below.
+        }
+        if (!alive) return;
+        if (!response.speechText.trim()) {
+          store().setErrorNotice(null);
+          await speak({
+            transcript: response.transcript,
+            speechText: AI_ERROR_SPEECH,
+            corrections: [],
+            profileNotes: [],
+            levelSignal: 'hold',
+          });
+          return;
+        }
+      }
+
       await speak(response);
       // Attribute conversation time to the local rolling-day counter using the
       // same char-based estimate the server uses for elapsed_ms, so the soft cap
@@ -1148,7 +1181,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
           const { granted } = await getRecognitionPermissions();
           if (!alive) return;
           if (!granted) {
-            store().setErrorNotice('Microphone access is off — turn it on in Settings.');
+            store().setErrorNotice(MIC_OFF_NOTICE);
             return;
           }
           liveMode = true;

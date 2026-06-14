@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -24,6 +25,9 @@ const SUB_URL =
   Platform.OS === 'ios'
     ? 'https://apps.apple.com/account/subscriptions'
     : 'https://play.google.com/store/account/subscriptions?package=com.denny32.parlez';
+
+/** Animated flame for an active streak — "let it burn" (transparent GIF). */
+const BURNING_FLAME = require('../../assets/images/burning flame.gif');
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = [
@@ -75,9 +79,12 @@ export default function Streak() {
   const today = todayLocal();
   const completed = useMemo(() => completedDays(activity), [activity]);
 
-  // Prefer the live store streak (kept fresh by refreshStreakFromHistory); fall
-  // back to a local recompute if the store hasn't caught up yet.
-  const streakNow = streak || computeStreak(completed, today);
+  // The activity ledger is the source of truth: recompute directly from it so a
+  // lapsed day shows 0 here even when the store still holds a stale pre-lapse
+  // count (the store is only reconciled after the next turn / on launch). Fall
+  // back to the store value only until the ledger has loaded (or on web, where
+  // there's no persisted activity).
+  const streakNow = activity.length > 0 ? computeStreak(completed, today) : streak;
   const record = useMemo(() => Math.max(streakNow, longestRun(completed)), [completed, streakNow]);
 
   const tier = flameTierFor(Math.max(1, streakNow));
@@ -135,14 +142,24 @@ export default function Streak() {
             styles.hero,
             { backgroundColor: colors.surface, borderColor: colors.border },
           ]}>
-          {/* Flame art ships on a white background, so it sits on a white disc
-              in both modes — reads as a warm glow rather than a stray box. */}
-          <View style={styles.flameWrap}>
-            <Image
-              source={tier.image}
-              style={[styles.flame, flameDim && { opacity: 0.35 }]}
-              resizeMode="contain"
-            />
+          {/* Flame art sits on a white disc in both modes — reads as a warm glow
+              rather than a stray box. An active streak gets the animated flame so
+              it literally burns; a cold streak shows a dimmed static ember. */}
+          <View style={[styles.flameWrap, !flameDim && { borderColor: tier.color }]}>
+            {flameDim ? (
+              <Image
+                source={tier.image}
+                style={[styles.flame, { opacity: 0.35 }]}
+                resizeMode="contain"
+              />
+            ) : (
+              <ExpoImage
+                source={BURNING_FLAME}
+                style={styles.flame}
+                contentFit="contain"
+                autoplay
+              />
+            )}
           </View>
           <Text style={[styles.count, { color: tier.color }]}>{streakNow}</Text>
           <Text style={[styles.countLabel, { color: colors.text }]}>
@@ -366,15 +383,17 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
   },
   flameWrap: {
-    width: 120,
-    height: 120,
+    width: 132,
+    height: 132,
     borderRadius: Radius.pill,
     backgroundColor: '#FFFFFF',
+    borderWidth: 3,
+    borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.sm,
   },
-  flame: { width: 96, height: 96 },
+  flame: { width: 112, height: 112 },
   count: { fontSize: 56, fontWeight: '800', lineHeight: 60 },
   countLabel: { fontSize: FontSize.body, fontWeight: '600' },
   blurb: {

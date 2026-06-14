@@ -4,6 +4,17 @@
  */
 import type { Level } from '@/lib/types';
 
+// Canonical host is www: codarti.com 307-redirects to www.codarti.com, so we
+// link the www form directly and skip the redirect hop. All three live (HTTP 200).
+/** Hosted legal pages (also linked from the paywall + Play Store listing). */
+export const PRIVACY_POLICY_URL = 'https://www.codarti.com/parlez/privacy';
+export const TERMS_URL = 'https://www.codarti.com/parlez/terms';
+/** Public account-deletion page (Play data-safety link + in-app "delete on web"). */
+export const DELETE_ACCOUNT_URL = 'https://www.codarti.com/parlez/delete-account';
+
+/** Notice shown when the OS mic permission is off — tapping it opens Settings. */
+export const MIC_OFF_NOTICE = 'Microphone access is off — tap to open Settings.';
+
 /** Splash screen max duration before onboarding (spec §3.1 step 1). */
 export const SPLASH_MS = 1500;
 
