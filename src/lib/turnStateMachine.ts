@@ -79,9 +79,18 @@ const POLL_MS = 150;
 const END_FALLBACK_MS = 2500;
 const FALLBACK_SPEECH: SynthesizedSpeech = { uri: null, durationMs: 2500 };
 
-/** Marie's spoken apology when the AI/network fails (spec §10.2). */
+/** Marie's spoken apology when the AI/network genuinely fails (spec §10.2). */
 const AI_ERROR_SPEECH =
   'Oh, j’ai un petit problème technique. Un instant, et on reprend.';
+
+/**
+ * Spoken recovery when the model returns no usable reply for a turn we DID
+ * understand (the user's words are already on screen). A gentle conversational
+ * re-ask — never the technical-glitch apology, and never the STT "didn't hear
+ * you" line — so a rare empty completion reads as Camille simply inviting them
+ * to go again, not the app admitting a fault.
+ */
+const EMPTY_REPLY_RECOVERY = 'Pardon, peux-tu répéter, s’il te plaît ?';
 
 /** Marie's spoken re-prompt when speech-to-text caught nothing (spec §10.2). */
 const STT_MISS_SPEECH =
@@ -723,7 +732,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
           store().setErrorNotice(null);
           await speak({
             transcript: response.transcript,
-            speechText: AI_ERROR_SPEECH,
+            speechText: EMPTY_REPLY_RECOVERY,
             corrections: [],
             profileNotes: [],
             levelSignal: 'hold',
