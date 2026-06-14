@@ -12,10 +12,10 @@ import {
   FLAME_TIERS,
   addDays,
   completedDays,
-  computeStreak,
   flameTierFor,
   guaranteeProgress,
   nextFlameTier,
+  reconcileStreak,
   todayLocal,
 } from '@/lib/streak';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
@@ -66,6 +66,7 @@ export default function Streak() {
   const router = useRouter();
 
   const streak = useAppStore((s) => s.streakCount);
+  const lastSessionDate = useAppStore((s) => s.lastSessionDate);
   const firstLaunchDate = useAppStore((s) => s.firstLaunchDate);
   const isFirstTimeUser = useAppStore((s) => s.isFirstTimeUser);
 
@@ -79,12 +80,15 @@ export default function Streak() {
   const today = todayLocal();
   const completed = useMemo(() => completedDays(activity), [activity]);
 
-  // The activity ledger is the source of truth: recompute directly from it so a
-  // lapsed day shows 0 here even when the store still holds a stale pre-lapse
-  // count (the store is only reconciled after the next turn / on launch). Fall
-  // back to the store value only until the ledger has loaded (or on web, where
-  // there's no persisted activity).
-  const streakNow = activity.length > 0 ? computeStreak(completed, today) : streak;
+  // Recompute from the activity ledger so a lapsed day shows here even when the
+  // store still holds a stale pre-lapse count — but reconcile against the stored
+  // streak so a short ledger (e.g. just after a reinstall, before it rebuilds)
+  // can't under-report a still-alive synced streak. Matches refreshStreakFromHistory
+  // exactly. Falls back to the store value until the ledger has loaded (or on web).
+  const streakNow =
+    activity.length > 0
+      ? reconcileStreak(completed, today, streak, lastSessionDate).streak
+      : streak;
   const record = useMemo(() => Math.max(streakNow, longestRun(completed)), [completed, streakNow]);
 
   const tier = flameTierFor(Math.max(1, streakNow));

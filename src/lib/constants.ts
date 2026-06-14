@@ -51,11 +51,11 @@ export const MAX_LISTEN_MS = 25000;
 /**
  * Auto-send when the transcript has stopped gaining words for this long, even
  * if the volume meter still reads "voice" (noisy room, recognizer echo). Keeps
- * the practical auto-send delay far under MAX_LISTEN_MS while staying longer
- * than the unfinished-sentence silence window, so a thinking pause is never cut
- * earlier than it already would be.
+ * the practical auto-send delay far under MAX_LISTEN_MS while staying at least as
+ * long as the unfinished-sentence silence window, so a thinking pause is never
+ * cut earlier than it already would be.
  */
-export const TRANSCRIPT_STALE_STOP_MS = 3000;
+export const TRANSCRIPT_STALE_STOP_MS = 4000;
 
 /**
  * Beat between revealing the user's transcribed bubble and Camille's reply. The

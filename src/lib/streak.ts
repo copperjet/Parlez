@@ -224,6 +224,49 @@ export function guaranteeProgress(
 }
 
 /**
+ * Reconcile the ledger-computed streak with a stored (possibly synced) scalar.
+ *
+ * The local daily_activity ledger is the source of truth — EXCEPT it can be
+ * shorter than the real streak after a reinstall, where only the synced scalar
+ * streakCount survives and the ledger starts empty then rebuilds one day at a
+ * time. A "still alive" stored streak (its last completed day is today or
+ * yesterday) may represent history the ledger can't see, so the short ledger must
+ * never SHRINK it: reconcile to the larger. A genuinely lapsed stored streak
+ * (last day older than yesterday) is NOT alive, and the ledger resets it.
+ *
+ * Pure so both the launch/turn refresh and the streak screen agree exactly.
+ */
+export function reconcileStreak(
+  completed: Set<string>,
+  today: string,
+  stored: number,
+  storedLast: string | null,
+): { streak: number; lastDate: string | null } {
+  const ledgerStreak = computeStreak(completed, today);
+  const storedAlive =
+    stored > 0 && (storedLast === today || storedLast === addDays(today, -1));
+
+  let streak = ledgerStreak;
+  let lastDate: string | null = completed.has(today)
+    ? today
+    : completed.has(addDays(today, -1))
+      ? addDays(today, -1)
+      : storedLast;
+
+  if (storedAlive) {
+    // Today's practice that continues a streak which ended yesterday grows the
+    // run from the stored count (the ledger only counts the days it holds).
+    const continued =
+      completed.has(today) && storedLast === addDays(today, -1) ? stored + 1 : stored;
+    if (continued > streak) {
+      streak = continued;
+      lastDate = completed.has(today) ? today : storedLast;
+    }
+  }
+  return { streak, lastDate };
+}
+
+/**
  * Recompute the streak from the daily-activity table and mirror it into the
  * store + kv. Called after each turn's practice time is recorded. Best-effort
  * and a no-op when there's no persisted activity (e.g. web), so it never clobbers
@@ -235,16 +278,18 @@ export async function refreshStreakFromHistory(): Promise<void> {
     if (activity.length === 0) return;
     const completed = completedDays(activity);
     const today = todayLocal();
-    const streak = computeStreak(completed, today);
 
     const s = useAppStore.getState();
-    if (s.streakCount === streak) return;
+    const { streak, lastDate } = reconcileStreak(
+      completed,
+      today,
+      s.streakCount,
+      s.lastSessionDate,
+    );
 
-    const lastDate = completed.has(today)
-      ? today
-      : completed.has(addDays(today, -1))
-        ? addDays(today, -1)
-        : s.lastSessionDate;
+    if (s.streakCount === streak && (s.lastSessionDate ?? null) === (lastDate ?? null)) {
+      return;
+    }
     s.setStreak(streak, lastDate ?? null);
     await saveStreak(streak, lastDate ?? null);
   } catch {

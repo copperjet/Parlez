@@ -77,14 +77,47 @@ export async function pullState(): Promise<boolean> {
   const interests = Array.isArray(remote.interests)
     ? remote.interests
     : store.interests;
-  const streakCount =
+
+  // Streak reconciliation — never lose a streak unjustifiably, never resurrect a
+  // dead one. Last-write-wins would let an old account clobber a higher local
+  // streak (or vice-versa). Instead the record whose practice is more RECENT
+  // (later lastSessionDate) wins, since that reflects the true current run; a tie
+  // keeps the larger count. The streak engine (refreshStreakFromHistory) then
+  // validates/lapses the winner against the local ledger on the next launch/turn.
+  const remoteCount =
     typeof remote.streakCount === 'number' && remote.streakCount >= 0
       ? Math.floor(remote.streakCount)
-      : store.streakCount;
-  const lastSessionDate =
-    remote.lastSessionDate !== undefined
+      : 0;
+  const remoteDate =
+    typeof remote.lastSessionDate === 'string' && remote.lastSessionDate
       ? remote.lastSessionDate
-      : store.lastSessionDate;
+      : null;
+  const localCount = store.streakCount;
+  const localDate = store.lastSessionDate;
+
+  let streakCount: number;
+  let lastSessionDate: string | null;
+  if (remoteDate && localDate) {
+    if (remoteDate > localDate) {
+      streakCount = remoteCount;
+      lastSessionDate = remoteDate;
+    } else if (localDate > remoteDate) {
+      streakCount = localCount;
+      lastSessionDate = localDate;
+    } else {
+      streakCount = Math.max(remoteCount, localCount);
+      lastSessionDate = localDate;
+    }
+  } else if (remoteDate) {
+    streakCount = remoteCount;
+    lastSessionDate = remoteDate;
+  } else if (localDate) {
+    streakCount = localCount;
+    lastSessionDate = localDate;
+  } else {
+    streakCount = Math.max(remoteCount, localCount);
+    lastSessionDate = null;
+  }
 
   store.hydrate({
     hasOnboarded: store.hasOnboarded,
