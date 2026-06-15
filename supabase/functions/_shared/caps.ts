@@ -96,3 +96,24 @@ export async function loadTodayElapsedMs(
   const ms = (data as { elapsed_ms?: number } | null)?.elapsed_ms ?? 0;
   return ms;
 }
+
+/**
+ * Lifetime accumulated elapsed_ms across every usage_daily row for the user.
+ * Meters the free-taste allowance a never-subscribed caller gets before the
+ * paywall — and, because it's lifetime, a churned subscriber (who already burned
+ * far more than the allowance while paying) is correctly past it, never handed a
+ * second helping of free time.
+ */
+export async function loadLifetimeElapsedMs(
+  svc: SupabaseClient,
+  userId: string,
+): Promise<number> {
+  const { data } = await svc
+    .from('usage_daily')
+    .select('elapsed_ms')
+    .eq('user_id', userId);
+  if (!Array.isArray(data)) return 0;
+  let ms = 0;
+  for (const row of data as { elapsed_ms?: number }[]) ms += row.elapsed_ms ?? 0;
+  return ms;
+}

@@ -7,7 +7,7 @@
 import { Redirect } from 'expo-router';
 import type { ReactNode } from 'react';
 
-import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { FREE_TASTE_SECONDS, useSubscriptionStore } from '@/stores/subscriptionStore';
 
 export function useEntitlement(): {
   isPremium: boolean;
@@ -22,9 +22,24 @@ export function useEntitlement(): {
   return { isPremium, isTrialing, loading, ready };
 }
 
+/**
+ * True when the user may use the app right now: an entitled (or trialing) user,
+ * OR a non-subscriber still inside the free-taste allowance. Subscribes to
+ * freeSecondsUsed so crossing the allowance mid-session re-renders the gate and
+ * bounces them to the paywall.
+ */
+export function useCanConverse(): { allowed: boolean; ready: boolean } {
+  const isPremium = useSubscriptionStore((s) => s.isPremium);
+  const isTrialing = useSubscriptionStore((s) => s.isTrialing);
+  const ready = useSubscriptionStore((s) => s.ready);
+  const freeSecondsUsed = useSubscriptionStore((s) => s.freeSecondsUsed);
+  const hasFreeTaste = freeSecondsUsed < FREE_TASTE_SECONDS;
+  return { allowed: isPremium || isTrialing || hasFreeTaste, ready };
+}
+
 export function PaywallGate({ children }: { children: ReactNode }) {
-  const { isPremium, isTrialing, ready } = useEntitlement();
+  const { allowed, ready } = useCanConverse();
   if (!ready) return null;
-  if (!isPremium && !isTrialing) return <Redirect href={'/paywall' as never} />;
+  if (!allowed) return <Redirect href={'/paywall?reason=free' as never} />;
   return <>{children}</>;
 }

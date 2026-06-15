@@ -22,7 +22,12 @@ import {
 } from '../_shared/prompt.ts';
 import { resolveCaller, type Caller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
-import { loadEntitlement, loadTodayElapsedMs, tierCapSeconds } from '../_shared/caps.ts';
+import {
+  loadEntitlement,
+  loadLifetimeElapsedMs,
+  loadTodayElapsedMs,
+  tierCapSeconds,
+} from '../_shared/caps.ts';
 import {
   estimateClaudeMicrocents,
   estimateScribeMicrocents,
@@ -30,6 +35,15 @@ import {
   estimateWhisperMicrocents,
   type ClaudeUsage,
 } from '../_shared/pricing.ts';
+
+/**
+ * Free-taste allowance (spec: value-first onboarding). A never-subscribed caller
+ * may hold up to this much *lifetime* conversation time before the paywall — one
+ * full first session (~10 min = the daily streak goal, so they light their first
+ * flame on the way in). The server is authoritative; the client mirrors it only
+ * for routing. Keep in sync with FREE_TASTE_SECONDS in the subscription store.
+ */
+const FREE_TASTE_MS = 10 * 60 * 1000;
 
 interface AiResult {
   speechText: string;
@@ -544,21 +558,30 @@ Deno.serve(async (req: Request) => {
       const svc = serviceClient();
       const { tier, entitled } = await loadEntitlement(svc, caller.userId);
       if (!entitled) {
-        return json({ reason: 'not_entitled' }, 403);
-      }
-      const cap = tierCapSeconds(tier);
-      if (cap !== null) {
-        const usedMs = await loadTodayElapsedMs(svc, caller.userId);
-        if (usedMs >= cap * 1000) {
-          return json(
-            {
-              reason: 'daily_cap',
-              tier,
-              cap_seconds: cap,
-              used_seconds: Math.round(usedMs / 1000),
-            },
-            402,
-          );
+        // Value-first: a non-entitled caller gets the free taste until their
+        // LIFETIME conversation time crosses FREE_TASTE_MS, then the paywall (403).
+        // Lifetime (not daily) so the allowance is genuinely one-time and a
+        // churned subscriber — already well past it — is never re-granted free time.
+        const freeUsedMs = await loadLifetimeElapsedMs(svc, caller.userId);
+        if (freeUsedMs >= FREE_TASTE_MS) {
+          return json({ reason: 'not_entitled' }, 403);
+        }
+        // Under the allowance — serve this turn for free (no tier cap applies).
+      } else {
+        const cap = tierCapSeconds(tier);
+        if (cap !== null) {
+          const usedMs = await loadTodayElapsedMs(svc, caller.userId);
+          if (usedMs >= cap * 1000) {
+            return json(
+              {
+                reason: 'daily_cap',
+                tier,
+                cap_seconds: cap,
+                used_seconds: Math.round(usedMs / 1000),
+              },
+              402,
+            );
+          }
         }
       }
     } catch (e) {

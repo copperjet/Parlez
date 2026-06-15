@@ -1,22 +1,21 @@
 import { Redirect } from 'expo-router';
 
+import { useCanConverse } from '@/components/PaywallGate';
 import { useAppStore } from '@/stores/appStore';
-import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 /**
- * Routing gate (spec §3.2): onboarding for first-timers, paywall for users
- * without an active `premium` entitlement, conversation for everyone else.
- * Subscription state hydrates from AsyncStorage cache before this renders, so
- * returning paying users go straight to /conversation even offline.
+ * Routing gate (spec §3.2): onboarding for first-timers, then conversation for
+ * anyone allowed to converse — an entitled/trialing user OR a non-subscriber
+ * still inside the free taste (value-first onboarding). Everyone else hits the
+ * paywall. Subscription state hydrates from AsyncStorage cache before this
+ * renders, so returning paying users go straight to /conversation even offline.
  */
 export default function Index() {
   const hasOnboarded = useAppStore((s) => s.hasOnboarded);
-  const isPremium = useSubscriptionStore((s) => s.isPremium);
-  const isTrialing = useSubscriptionStore((s) => s.isTrialing);
-  const ready = useSubscriptionStore((s) => s.ready);
+  const { allowed, ready } = useCanConverse();
 
   if (!hasOnboarded) return <Redirect href="/onboarding" />;
   if (!ready) return null;
-  if (!isPremium && !isTrialing) return <Redirect href={'/paywall' as never} />;
+  if (!allowed) return <Redirect href={'/paywall' as never} />;
   return <Redirect href="/conversation" />;
 }

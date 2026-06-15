@@ -29,6 +29,16 @@ import {
 
 const ENTITLEMENT_ID = 'premium';
 const USAGE_KEY = 'usage_today_v1';
+const FREE_USAGE_KEY = 'free_usage_v1';
+
+/**
+ * Free-taste allowance: lifetime conversation seconds a never-subscribed user
+ * gets before the paywall. 600s = 10 min = the daily streak goal, so the first
+ * free session also lights their first flame. MUST match FREE_TASTE_MS on the
+ * server (supabase/functions/turn/index.ts) — the server is authoritative; this
+ * mirror only drives routing so the paywall doesn't flash a round-trip late.
+ */
+export const FREE_TASTE_SECONDS = 600;
 
 export type Tier = 'monthly' | 'annual' | 'lifetime' | null;
 
@@ -68,6 +78,14 @@ interface SubscriptionStore {
   capBlocked: boolean;
   capBlockedTier: Exclude<Tier, null> | null;
 
+  /**
+   * Lifetime conversation seconds — the free-taste meter for non-subscribers.
+   * Accrues on every turn (mirrors the server's lifetime elapsed_ms), so a
+   * never-subscribed user is gated once they cross FREE_TASTE_SECONDS and a
+   * churned subscriber — already well past it — never gets a fresh free run.
+   */
+  freeSecondsUsed: number;
+
   hydrateFromCache: () => Promise<void>;
   refresh: () => Promise<void>;
   purchase: (pkg: PurchasesPackage) => Promise<boolean>;
@@ -77,6 +95,7 @@ interface SubscriptionStore {
 
   // Usage actions.
   hydrateUsageFromCache: () => Promise<void>;
+  hydrateFreeUsageFromCache: () => Promise<void>;
   resetDailyIfNewDay: () => void;
   recordTurnElapsed: (ms: number) => void;
   setCapBlocked: (opts: { tier: Exclude<Tier, null>; capSeconds: number }) => void;
@@ -155,6 +174,24 @@ async function readPersistedUsage(): Promise<PersistedUsage | null> {
   }
 }
 
+async function persistFreeUsage(seconds: number): Promise<void> {
+  try {
+    await AsyncStorage.setItem(FREE_USAGE_KEY, String(Math.max(0, Math.round(seconds))));
+  } catch {
+    // best-effort
+  }
+}
+
+async function readFreeUsage(): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(FREE_USAGE_KEY);
+    const n = Number(raw ?? '0');
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 let listenerRegistered = false;
 
 export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
@@ -172,6 +209,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   tierCapSeconds: null,
   capBlocked: false,
   capBlockedTier: null,
+  freeSecondsUsed: 0,
 
   hydrateFromCache: async () => {
     const cached = await getCachedEntitlement();
@@ -305,6 +343,10 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
     }
     try {
       await AsyncStorage.removeItem(USAGE_KEY);
+      // Log-out switches to a fresh anonymous RevenueCat id, for which the server
+      // sees zero lifetime usage and re-grants the free taste — so clear the local
+      // mirror too, keeping client and server in agreement.
+      await AsyncStorage.removeItem(FREE_USAGE_KEY);
     } catch {
       // best-effort
     }
@@ -319,6 +361,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       tierCapSeconds: null,
       capBlocked: false,
       capBlockedTier: null,
+      freeSecondsUsed: 0,
     });
   },
 
@@ -337,6 +380,10 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       tier: next.tier,
       fetchedAt,
     });
+  },
+
+  hydrateFreeUsageFromCache: async () => {
+    set({ freeSecondsUsed: await readFreeUsage() });
   },
 
   hydrateUsageFromCache: async () => {
@@ -376,6 +423,13 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
     const next = base + seconds;
     set({ usageTodaySeconds: next, usageDay: today });
     void persistUsage({ day: today, seconds: next });
+    // Free-taste meter (lifetime). Accrue on every turn — same as the server's
+    // lifetime elapsed_ms — so the gate mirrors the server exactly: a fresh user
+    // is let in until they cross FREE_TASTE_SECONDS, and a churned subscriber
+    // (already far past it) is never handed a second free run.
+    const free = get().freeSecondsUsed + seconds;
+    set({ freeSecondsUsed: free });
+    void persistFreeUsage(free);
   },
 
   setCapBlocked: ({ tier, capSeconds }) => {

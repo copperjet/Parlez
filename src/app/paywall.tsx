@@ -69,6 +69,7 @@ export default function Paywall() {
   const router = useRouter();
   const params = useLocalSearchParams<{ reason?: string }>();
   const reasonCap = params.reason === 'cap';
+  const reasonFree = params.reason === 'free';
 
   const offerings = useSubscriptionStore((s) => s.offerings);
   const loading = useSubscriptionStore((s) => s.loading);
@@ -174,14 +175,18 @@ export default function Paywall() {
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + Spacing.xl }]}>
         <Text style={[styles.title, { color: colors.text }]}>
-          {reasonCap
-            ? 'Keep going. You will speak French.'
-            : 'You will speak French. That’s the guarantee.'}
+          {reasonFree
+            ? 'You just spoke French. Keep going.'
+            : reasonCap
+              ? 'Keep going. You will speak French.'
+              : 'You will speak French. That’s the guarantee.'}
         </Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {reasonCap
-            ? 'You’ve hit today’s limit. Annual gives you 3× the daily practice — and the same guarantee: speak, or your money back.'
-            : 'Every French app taught you words. Parlez makes you speak them — no flashcards, no grammar drills.'}
+          {reasonFree
+            ? 'That was your first session with Camille — and your first streak day. Keep your flame lit and your French growing, with the same guarantee: speak, or your money back.'
+            : reasonCap
+              ? 'You’ve hit today’s limit. Annual gives you 3× the daily practice — and the same guarantee: speak, or your money back.'
+              : 'Every French app taught you words. Parlez makes you speak them — no flashcards, no grammar drills.'}
         </Text>
 
         <View style={styles.tiers}>

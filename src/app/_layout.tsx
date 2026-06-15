@@ -44,6 +44,10 @@ export default function RootLayout() {
         try {
           useAuthStore.getState().init();
           await initRevenueCat();
+          // Free-taste meter must load BEFORE hydrateFromCache flips `ready` — the
+          // gate reads it the instant routing unblocks, so loading it after would
+          // briefly render the conversation to an exhausted user before bouncing.
+          await useSubscriptionStore.getState().hydrateFreeUsageFromCache();
           await useSubscriptionStore.getState().hydrateFromCache();
           await useSubscriptionStore.getState().hydrateUsageFromCache();
           void useSubscriptionStore.getState().refresh();
