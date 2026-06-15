@@ -10,7 +10,7 @@
  * mirrors the result into the store. Best-effort — never blocks Marie's reply.
  */
 import { DAILY_GOAL_SECONDS, GUARANTEE_DAYS, GUARANTEE_WINDOW_DAYS } from '@/lib/constants';
-import { loadDailyActivity, saveStreak } from '@/lib/db/sessions';
+import { addDailyActivity, loadDailyActivity, saveStreak } from '@/lib/db/sessions';
 import { useAppStore } from '@/stores/appStore';
 import type { ImageSourcePropType } from 'react-native';
 
@@ -272,6 +272,34 @@ export function reconcileStreak(
  * and a no-op when there's no persisted activity (e.g. web), so it never clobbers
  * an in-memory streak with a phantom zero.
  */
+/**
+ * Light today's streak day when the free taste is spent.
+ *
+ * The first flame is, by design, the user's first streak day — the celebratory
+ * paywall literally says so. But the local daily-activity ledger can sit just
+ * under the 10-min goal at that moment: the server (authoritative for the free
+ * gate) also bills the greeting + silence prompts toward FREE_TASTE_MS, whereas
+ * the client ledger only banks reply turns (runUserTurn). So the server 403s the
+ * turn before today's local total reaches DAILY_GOAL_SECONDS, and the streak
+ * would read 0 next to a "Day 1" celebration.
+ *
+ * Top today up to the goal, then recompute. Idempotent (a no-op once today is
+ * already complete) and best-effort.
+ */
+export async function creditFreeTasteStreakDay(): Promise<void> {
+  try {
+    const today = todayLocal();
+    const activity = await loadDailyActivity();
+    const todaySeconds = activity.find((a) => a.date === today)?.seconds ?? 0;
+    if (todaySeconds < DAILY_GOAL_SECONDS) {
+      await addDailyActivity(today, DAILY_GOAL_SECONDS - todaySeconds);
+    }
+    await refreshStreakFromHistory();
+  } catch {
+    // Best-effort — streak is UX polish, never blocks the paywall flow.
+  }
+}
+
 export async function refreshStreakFromHistory(): Promise<void> {
   try {
     const activity = await loadDailyActivity();

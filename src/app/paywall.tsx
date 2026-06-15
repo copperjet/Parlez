@@ -108,9 +108,16 @@ export default function Paywall() {
           : 'lifetime';
 
   // Bounce out the moment the user is entitled (purchase / restore / live update).
+  // POP back to the conversation beneath rather than replace: the paywall was
+  // pushed on top of an existing conversation, which itself flips to unlocked and
+  // mounts ONE turn engine when entitlement lands. A `replace` would stack a
+  // SECOND conversation (and a second engine + TTS player) on top of it — the
+  // "Camille speaks twice" bug. Falling back to replace covers the rare case of
+  // no back stack.
   useEffect(() => {
     if (isPremium || isTrialing) {
-      router.replace('/conversation' as never);
+      if (router.canGoBack()) router.back();
+      else router.replace('/conversation' as never);
     }
   }, [isPremium, isTrialing, router]);
 
@@ -238,6 +245,16 @@ export default function Paywall() {
         </Text>
 
         <View style={styles.tiers}>
+          {tiers.monthly ? (
+            <TierCard
+              tier="monthly"
+              pkg={tiers.monthly}
+              label="Monthly"
+              caption="Start with a free trial"
+              selected={selected === 'monthly'}
+              onPress={() => setSelected('monthly')}
+            />
+          ) : null}
           {tiers.annual ? (
             <TierCard
               tier="annual"
@@ -247,16 +264,6 @@ export default function Paywall() {
               badge="MOST POPULAR"
               selected={selected === 'annual'}
               onPress={() => setSelected('annual')}
-            />
-          ) : null}
-          {tiers.monthly ? (
-            <TierCard
-              tier="monthly"
-              pkg={tiers.monthly}
-              label="Monthly"
-              caption="Start with a free trial"
-              selected={selected === 'monthly'}
-              onPress={() => setSelected('monthly')}
             />
           ) : null}
           {tiers.lifetime ? (

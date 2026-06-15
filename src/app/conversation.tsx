@@ -30,6 +30,7 @@ import {
 } from '@/components';
 import { useCanConverse } from '@/components/PaywallGate';
 import { MIC_OFF_NOTICE, voiceName } from '@/lib/constants';
+import { creditFreeTasteStreakDay } from '@/lib/streak';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useNetwork } from '@/lib/useNetwork';
 import { useTurnEngine } from '@/lib/turnStateMachine';
@@ -429,6 +430,12 @@ export default function Conversation() {
     } else if (wasChatting.current) {
       // Just crossed the free-taste line in-session — celebrate, then offer.
       wasChatting.current = false;
+      // The free taste IS the first 10-min streak day. Light it here — the single
+      // chokepoint every exhaustion path funnels through (server 403 or the local
+      // meter crossing) — so the streak screen and the paywall's "Day 1" agree.
+      // The local ledger can trail the server, which also counts greeting +
+      // silence turns the client never banks; this tops today up to the goal.
+      void creditFreeTasteStreakDay();
       router.push('/paywall?reason=free' as never);
     }
   }, [canChat, ready, router]);

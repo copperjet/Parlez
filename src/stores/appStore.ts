@@ -43,7 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voice: 'camille',
   micSensitivity: 'auto',
   haptics: true,
-  chatTheme: 'sand',
+  chatTheme: 'ember',
 };
 
 interface AppStore {
