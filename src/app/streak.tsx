@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { SUPPORT_EMAIL } from '@/lib/constants';
 import { loadDailyActivity } from '@/lib/db/sessions';
+import { getCallerId } from '@/lib/revenuecat';
 import {
   FLAME_TIERS,
   addDays,
@@ -20,11 +21,8 @@ import {
 } from '@/lib/streak';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
-
-const SUB_URL =
-  Platform.OS === 'ios'
-    ? 'https://apps.apple.com/account/subscriptions'
-    : 'https://play.google.com/store/account/subscriptions?package=com.denny32.parlez';
+import { useAuthStore } from '@/stores/authStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 /** Animated flame for an active streak — "let it burn" (transparent GIF). */
 const BURNING_FLAME = require('../../assets/images/burning flame.gif');
@@ -69,6 +67,11 @@ export default function Streak() {
   const lastSessionDate = useAppStore((s) => s.lastSessionDate);
   const firstLaunchDate = useAppStore((s) => s.firstLaunchDate);
   const isFirstTimeUser = useAppStore((s) => s.isFirstTimeUser);
+
+  // Identifiers attached to a refund request so support can find the purchase.
+  const email = useAuthStore((s) => s.email);
+  const entitlement = useSubscriptionStore((s) => s.entitlement);
+  const planTier = useSubscriptionStore((s) => s.tier);
 
   const [activity, setActivity] = useState<{ date: string; seconds: number }[]>([]);
   const [monthOffset, setMonthOffset] = useState(0);
@@ -117,8 +120,33 @@ export default function Streak() {
     return { label: `${MONTHS[month]} ${year}`, cells };
   }, [monthOffset]);
 
-  const onRefund = () => {
-    void WebBrowser.openBrowserAsync(SUB_URL);
+  // Actually initiate the refund the guarantee promises. The store's subscription
+  // page can't issue a refund past Play's 48-hour window — and a 20-day-old sub is
+  // always past it — so open a pre-filled support email instead, with the purchase
+  // identifiers support needs to grant the refund in Play Console.
+  const onRefund = async () => {
+    const appUserId = await getCallerId();
+    const product = entitlement?.productIdentifier ?? planTier ?? 'unknown';
+    const subject = 'Parlez money-back guarantee — refund request';
+    const body =
+      `I’ve completed the 20-day guarantee and would like to request a full refund.\n\n` +
+      `— Please keep the lines below; they help us find your purchase —\n` +
+      `Account: ${email ?? 'anonymous (not signed in)'}\n` +
+      `App user ID: ${appUserId ?? 'unknown'}\n` +
+      `Product: ${product}\n` +
+      `First launch: ${firstLaunchDate ?? 'unknown'}\n` +
+      `Best streak: ${record} days\n`;
+    const url = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+      subject,
+    )}&body=${encodeURIComponent(body)}`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(
+        'Email us for your refund',
+        `Send a note to ${SUPPORT_EMAIL} and we’ll sort out your refund.`,
+      );
+    }
   };
 
   const flameDim = streakNow <= 0;
@@ -294,8 +322,9 @@ export default function Streak() {
           </View>
         </View>
 
-        {/* ── Money-back guarantee (first-time users only) ─────────────────── */}
-        {isFirstTimeUser && (guarantee.windowOpen || guarantee.eligible) ? (
+        {/* ── Money-back guarantee (first-time users, while the claim is live) ── */}
+        {isFirstTimeUser &&
+        (guarantee.windowOpen || (guarantee.eligible && guarantee.claimOpen)) ? (
           <View
             style={[
               styles.guarantee,
@@ -313,13 +342,13 @@ export default function Streak() {
               <Text style={[styles.guaranteeTitle, { color: colors.text }]}>
                 {guarantee.eligible
                   ? 'You qualify for the money-back guarantee'
-                  : '30-day money-back guarantee'}
+                  : `Your ${guarantee.needed}-day guarantee`}
               </Text>
             </View>
             <Text style={[styles.guaranteeBody, { color: colors.textSecondary }]}>
               {guarantee.eligible
                 ? 'You practised 20 days in a row. If Parlez isn’t for you, you can request a full refund — no questions.'
-                : `Practise 10 minutes a day for ${guarantee.needed} days in a row to qualify for a full refund.`}
+                : `Practise 10 minutes a day for ${guarantee.needed} days in a row. That’s our promise this works — keep your streak and you’re covered.`}
             </Text>
 
             <View style={[styles.barTrack, { backgroundColor: colors.surfaceMuted }]}>
@@ -344,20 +373,27 @@ export default function Streak() {
               ) : null}
             </View>
 
-            {guarantee.eligible ? (
+            {guarantee.eligible && guarantee.claimOpen ? (
               <Pressable
                 onPress={onRefund}
                 accessibilityRole="button"
                 style={[styles.refundBtn, { borderColor: colors.accent }]}>
                 <Text style={[styles.refundText, { color: colors.accent }]}>Request a refund</Text>
-                <Ionicons name="open-outline" size={16} color={colors.accent} />
+                <Ionicons name="mail-outline" size={16} color={colors.accent} />
               </Pressable>
             ) : null}
           </View>
         ) : null}
 
         <Pressable
-          onPress={() => router.push('/conversation' as never)}
+          // Streak is a modal pushed OVER the live conversation — dismiss back to
+          // it rather than router.push('/conversation'), which would stack a SECOND
+          // conversation (a second turn engine → a duplicate greeting + scroll
+          // glitch). Mirrors the X button and the paywall dismiss pattern.
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/conversation' as never);
+          }}
           accessibilityRole="button"
           style={[styles.cta, { backgroundColor: colors.accent }]}>
           <Text style={[styles.ctaText, { color: colors.onAccent }]}>Keep practising</Text>

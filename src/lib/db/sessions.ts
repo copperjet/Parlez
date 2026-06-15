@@ -328,6 +328,24 @@ export function touchActivity(): Promise<void> {
   return saveKv({ lastActiveAt: String(Date.now()) });
 }
 
+/**
+ * The Supabase uid that "owns" the local account-scoped data on this device.
+ * Device-scoped metadata: survives sign-out, is NOT touched by any clear*() and
+ * is NOT synced. The sign-in guard compares it to the incoming uid to decide
+ * whether a different account is taking over (and the local data must be wiped).
+ */
+const ACTIVE_UID_KEY = 'activeAccountUid';
+
+export async function loadActiveAccountUid(): Promise<string | null> {
+  const map = await readKv();
+  const v = map.get(ACTIVE_UID_KEY);
+  return v ? v : null; // '' means none
+}
+
+export function saveActiveAccountUid(uid: string | null): Promise<void> {
+  return saveKv({ [ACTIVE_UID_KEY]: uid ?? '' });
+}
+
 /** Append one message to the persisted transcript. */
 export async function saveMessage(message: Message): Promise<void> {
   const db = await getDb();

@@ -43,14 +43,12 @@ import {
   replaceNotes,
 } from '@/lib/db/profile';
 import {
-  addDailyActivity,
   saveLevel,
   saveMessage,
   saveProfileSummary,
   saveStructuredProfile,
   saveTurnsSinceConsolidation,
 } from '@/lib/db/sessions';
-import { refreshStreakFromHistory, todayLocal } from '@/lib/streak';
 import { consolidateProfile } from '@/lib/services';
 
 import { DailyCapError, NotEntitledError } from '@/lib/services/supabaseService';
@@ -752,11 +750,11 @@ export function useTurnEngine(online: boolean): TurnEngine {
         estimateSpeechMs(response.transcript.length) +
         estimateSpeechMs(response.speechText.length);
       useSubscriptionStore.getState().recordTurnElapsed(convoMs);
-      // Same time also feeds the daily-streak ledger: bank today's seconds, then
-      // recompute the streak (a day counts once it crosses 10 min). Fire-and-forget.
-      void addDailyActivity(todayLocal(), Math.round(convoMs / 1000)).then(() =>
-        refreshStreakFromHistory(),
-      );
+      // NOTE: the daily-streak ledger is NOT fed here. A char-estimate of speech
+      // undercounts real practice (it ignores listening/thinking time + the
+      // greeting), so a true 10-minute session fell short of the 10-min goal. The
+      // streak now banks actual wall-clock presence via the conversation screen's
+      // heartbeat (see ConversationSession in app/conversation.tsx).
     };
 
     /** Funnel for the end of a user turn — fired by the recognizer's `end` event. */
@@ -1086,8 +1084,9 @@ export function useTurnEngine(online: boolean): TurnEngine {
         store().setTurnState('idle');
         return;
       }
-      // Streak is intentionally NOT ticked here — opening the app doesn't
-      // count as practice. It ticks on the first real user reply (runUserTurn).
+      // Streak is intentionally NOT ticked here — opening the app doesn't count
+      // as practice. It accrues from real in-session presence, banked by the
+      // conversation screen's wall-clock heartbeat (app/conversation.tsx).
       await speak(response);
     };
 

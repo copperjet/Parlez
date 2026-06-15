@@ -9,7 +9,12 @@
  * Pure helpers + `refreshStreakFromHistory()` which recomputes from the table and
  * mirrors the result into the store. Best-effort — never blocks Marie's reply.
  */
-import { DAILY_GOAL_SECONDS, GUARANTEE_DAYS, GUARANTEE_WINDOW_DAYS } from '@/lib/constants';
+import {
+  DAILY_GOAL_SECONDS,
+  GUARANTEE_CLAIM_GRACE_DAYS,
+  GUARANTEE_DAYS,
+  GUARANTEE_WINDOW_DAYS,
+} from '@/lib/constants';
 import { addDailyActivity, loadDailyActivity, saveStreak } from '@/lib/db/sessions';
 import { useAppStore } from '@/stores/appStore';
 import type { ImageSourcePropType } from 'react-native';
@@ -174,6 +179,11 @@ export interface GuaranteeProgress {
   windowOpen: boolean;
   /** Met the consecutive-day requirement while the window was/is valid. */
   eligible: boolean;
+  /**
+   * A qualified user can still claim a refund (within the window + grace). Bounds
+   * the refund CTA so it doesn't show forever to a long-retained subscriber.
+   */
+  claimOpen: boolean;
 }
 
 /**
@@ -193,12 +203,16 @@ export function guaranteeProgress(
     daysLeft: 0,
     windowOpen: false,
     eligible: false,
+    claimOpen: false,
   };
   if (!firstLaunchDate) return base;
 
   const elapsed = daysBetween(firstLaunchDate, today);
   const daysLeft = Math.max(0, GUARANTEE_WINDOW_DAYS - elapsed);
   const windowOpen = elapsed >= 0 && elapsed < GUARANTEE_WINDOW_DAYS;
+  // Refund stays claimable through the window plus a grace period, then closes.
+  const claimOpen =
+    elapsed >= 0 && elapsed < GUARANTEE_WINDOW_DAYS + GUARANTEE_CLAIM_GRACE_DAYS;
 
   // Longest consecutive run of complete days across the whole window range.
   let bestRun = 0;
@@ -220,6 +234,7 @@ export function guaranteeProgress(
     daysLeft,
     windowOpen,
     eligible: bestRun >= needed,
+    claimOpen,
   };
 }
 
@@ -267,20 +282,14 @@ export function reconcileStreak(
 }
 
 /**
- * Recompute the streak from the daily-activity table and mirror it into the
- * store + kv. Called after each turn's practice time is recorded. Best-effort
- * and a no-op when there's no persisted activity (e.g. web), so it never clobbers
- * an in-memory streak with a phantom zero.
- */
-/**
  * Light today's streak day when the free taste is spent.
  *
  * The first flame is, by design, the user's first streak day — the celebratory
- * paywall literally says so. But the local daily-activity ledger can sit just
- * under the 10-min goal at that moment: the server (authoritative for the free
- * gate) also bills the greeting + silence prompts toward FREE_TASTE_MS, whereas
- * the client ledger only banks reply turns (runUserTurn). So the server 403s the
- * turn before today's local total reaches DAILY_GOAL_SECONDS, and the streak
+ * paywall literally says so. A safety net: the wall-clock heartbeat usually has
+ * today already past the 10-min goal by exhaustion time (the free taste is ~600s
+ * of *estimated speech*, which is well over 10 real minutes), but on edge cases —
+ * a churned user with little foreground time, or a burst of fast typed turns — the
+ * server can 403 before today's wall-clock total reaches DAILY_GOAL_SECONDS, which
  * would read 0 next to a "Day 1" celebration.
  *
  * Top today up to the goal, then recompute. Idempotent (a no-op once today is
@@ -300,6 +309,12 @@ export async function creditFreeTasteStreakDay(): Promise<void> {
   }
 }
 
+/**
+ * Recompute the streak from the daily-activity table and mirror it into the
+ * store + kv. Called as the wall-clock heartbeat banks practice time. Best-effort
+ * and a no-op when there's no persisted activity (e.g. web), so it never clobbers
+ * an in-memory streak with a phantom zero.
+ */
 export async function refreshStreakFromHistory(): Promise<void> {
   try {
     const activity = await loadDailyActivity();

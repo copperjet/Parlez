@@ -10,7 +10,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { loadPersistedState } from '@/lib/db/sessions';
 import { initRevenueCat } from '@/lib/revenuecat';
 import { refreshStreakFromHistory } from '@/lib/streak';
-import { pushState } from '@/lib/sync';
+import { backfillAccountOwner, pushState } from '@/lib/sync';
 import { useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -43,6 +43,9 @@ export default function RootLayout() {
         // before routing, then kick a background refresh.
         try {
           useAuthStore.getState().init();
+          // Stamp ownership of local data for an already-signed-in (restored)
+          // session so a later account switch is detected. Never wipes. Best-effort.
+          void backfillAccountOwner();
           await initRevenueCat();
           // Free-taste meter must load BEFORE hydrateFromCache flips `ready` — the
           // gate reads it the instant routing unblocks, so loading it after would

@@ -10,7 +10,15 @@
  * Conflict resolution is last-write-wins, keyed to the user's auth id with
  * row-level security (see supabase/migrations).
  */
+import { clearProfile } from '@/lib/db/profile';
 import {
+  clearActivity,
+  clearDailyActivity,
+  clearMessages,
+  clearStreak,
+  clearStructuredProfile,
+  loadActiveAccountUid,
+  saveActiveAccountUid,
   saveLevel,
   saveProfileSummary,
   saveStreak,
@@ -20,6 +28,7 @@ import { aliasToSupabase } from '@/lib/revenuecat';
 import { supabase } from '@/lib/supabase';
 import type { Level } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 interface SyncState {
   level: Level;
@@ -57,16 +66,26 @@ export async function pushState(): Promise<boolean> {
   return !error;
 }
 
-/** Pull the learning profile from the account and apply it locally. */
-export async function pullState(): Promise<boolean> {
+/**
+ * Pull the learning profile from the account and apply it locally.
+ *
+ * Three-state on purpose: a transient transport failure (offline, slow getUser,
+ * query error) MUST be distinguishable from a genuinely empty account. The caller
+ * seeds a new account from local on `'absent'` only — never on `'error'`, which
+ * would otherwise overwrite a real cloud profile with the just-wiped local state.
+ */
+export async function pullState(): Promise<'applied' | 'absent' | 'error'> {
   const userId = await currentUserId();
-  if (!supabase || !userId) return false;
+  // No id resolved (sync off, or getUser() failed on a flaky network) — can't tell
+  // empty from unreachable, so treat as error and don't let the caller push.
+  if (!supabase || !userId) return 'error';
   const { data, error } = await supabase
     .from('user_state')
     .select('state')
     .eq('user_id', userId)
     .maybeSingle();
-  if (error || !data?.state) return false;
+  if (error) return 'error';
+  if (!data?.state) return 'absent';
 
   const remote = data.state as Partial<SyncState>;
   const store = useAppStore.getState();
@@ -139,16 +158,76 @@ export async function pullState(): Promise<boolean> {
   void saveProfileSummary(profileSummary);
   void saveStructuredProfile({ learnerName, interests });
   void saveStreak(streakCount, lastSessionDate);
-  return true;
+  return 'applied';
 }
 
 /**
- * Called right after sign-in: pull the account's profile if it has one,
- * otherwise seed the account with the current local profile.
+ * Wipe all ACCOUNT-scoped local data — the conversation transcript, the learning
+ * profile, the structured slots, the streak + activity ledger, and the level. The
+ * in-memory store and the local DB are both reset. Device-scoped prefs (onboarding,
+ * settings, firstLaunchDate, sign-in-nudge dismissal, activeAccountUid) are kept.
+ *
+ * Used when a different account takes over the device (sign-in guard below) and by
+ * the delete-account flow.
  */
-export async function syncOnSignIn(): Promise<void> {
+export async function wipeLocalAccountData(): Promise<void> {
+  useAppStore.getState().resetAll(); // in-memory: messages, profile, streak, level
+  // The free-taste meter is per-identity too: a different account taking over must
+  // start from its own server truth, not inherit the previous user's spent meter.
+  useSubscriptionStore.getState().resetFreeUsage();
+  await Promise.allSettled([
+    clearMessages(),
+    clearProfile(),
+    clearStructuredProfile(),
+    clearStreak(),
+    clearDailyActivity(),
+    clearActivity(),
+    saveProfileSummary(''),
+  ]);
+}
+
+/**
+ * Called right after sign-in. If a DIFFERENT account previously owned the local
+ * data, wipe it first so no transcript/profile leaks across accounts on a shared
+ * device. Then pull the account's profile if it has one, otherwise seed the account
+ * with the current local profile. Finally record the new owner.
+ *
+ * A null prior owner (anonymous device) or the same uid re-signing in keeps local
+ * data — only a genuine account switch trips the wipe.
+ */
+export async function syncOnSignIn(userId: string): Promise<void> {
+  const prior = await loadActiveAccountUid();
+  // Anonymous device (prior == null) or the same uid re-signing in: NEVER wipe —
+  // the in-progress anonymous conversation + progress is adopted onto this account.
+  // Only a genuine switch (a different prior owner) wipes, so account B never
+  // inherits account A's transcript, profile, streak, or free-taste meter.
+  if (prior && prior !== userId) {
+    await wipeLocalAccountData();
+  }
+  // Seed a brand-new account from the adopted local state, but ONLY when the pull
+  // confirmed the account is genuinely empty — never on a transport error, which
+  // would clobber B's real cloud profile with the (possibly just-wiped) local one.
   const pulled = await pullState();
-  if (!pulled) await pushState();
+  if (pulled === 'absent') await pushState();
+  await saveActiveAccountUid(userId);
+}
+
+/**
+ * On launch, stamp the already-signed-in session as the local data's owner when no
+ * owner is recorded yet — migration for installs predating this guard, and for any
+ * session restored from storage without a fresh sign-in (which never runs
+ * `syncOnSignIn`). NEVER wipes; only records ownership so a LATER account switch is
+ * detected. No-op when signed out or when an owner is already recorded.
+ */
+export async function backfillAccountOwner(): Promise<void> {
+  if (!supabase) return;
+  // Local persisted session (no network) — instant and offline-safe, so ownership
+  // is stamped before the user can navigate to Account and switch.
+  const { data } = await supabase.auth.getSession();
+  const userId = data.session?.user?.id ?? null;
+  if (!userId) return;
+  const prior = await loadActiveAccountUid();
+  if (!prior) await saveActiveAccountUid(userId);
 }
 
 /**
@@ -159,5 +238,5 @@ export async function syncOnSignIn(): Promise<void> {
  */
 export async function onSignIn(supabaseUserId: string): Promise<void> {
   await aliasToSupabase(supabaseUserId);
-  await syncOnSignIn();
+  await syncOnSignIn(supabaseUserId);
 }

@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   BackHandler,
   FlatList,
   KeyboardAvoidingView,
@@ -30,7 +31,8 @@ import {
 } from '@/components';
 import { useCanConverse } from '@/components/PaywallGate';
 import { MIC_OFF_NOTICE, voiceName } from '@/lib/constants';
-import { creditFreeTasteStreakDay } from '@/lib/streak';
+import { addDailyActivity } from '@/lib/db/sessions';
+import { creditFreeTasteStreakDay, refreshStreakFromHistory, todayLocal } from '@/lib/streak';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useNetwork } from '@/lib/useNetwork';
 import { useTurnEngine } from '@/lib/turnStateMachine';
@@ -148,6 +150,47 @@ function ConversationSession() {
       return () => sub.remove();
     }, [personaName]),
   );
+
+  // Bank real in-conversation time toward the daily streak (spec: 10 min/day).
+  // A char-estimate of speech under-counts genuine practice — it ignores listening
+  // and thinking time — so the streak measures actual wall-clock presence in a live
+  // session instead. Foreground-only and idle-gated: a backgrounded screen or an
+  // abandoned-but-open conversation accrues no credit.
+  useEffect(() => {
+    const TICK_MS = 20_000; // bank presence every 20s
+    const MAX_DELTA_MS = 60_000; // cap one interval (missed timer / brief blur)
+    const IDLE_CUTOFF_MS = 90_000; // pause after this long with no turn activity
+    let lastTickAt = Date.now();
+    let lastActiveAt = Date.now();
+
+    // Any turn-state change means the user is engaged — refresh the activity clock.
+    const unsub = useAppStore.subscribe((state, prev) => {
+      if (state.turnState !== prev.turnState) lastActiveAt = Date.now();
+    });
+
+    const tick = () => {
+      const now = Date.now();
+      const engaged =
+        AppState.currentState === 'active' && now - lastActiveAt < IDLE_CUTOFF_MS;
+      const deltaSecs = Math.round(Math.min(now - lastTickAt, MAX_DELTA_MS) / 1000);
+      lastTickAt = now;
+      if (engaged && deltaSecs > 0) {
+        void addDailyActivity(todayLocal(), deltaSecs).then(() => refreshStreakFromHistory());
+      }
+    };
+
+    const id = setInterval(tick, TICK_MS);
+    // Don't credit time spent backgrounded; restart the clock on resume.
+    const appSub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') lastTickAt = Date.now();
+    });
+
+    return () => {
+      clearInterval(id);
+      appSub.remove();
+      unsub();
+    };
+  }, []);
 
   const sendDraft = () => {
     const text = draft.trim();

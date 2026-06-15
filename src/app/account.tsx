@@ -30,17 +30,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
-import { onSignIn } from '@/lib/sync';
+import { onSignIn, wipeLocalAccountData } from '@/lib/sync';
 import { supabase, syncAvailable } from '@/lib/supabase';
-import {
-  clearActivity,
-  clearDailyActivity,
-  clearMessages,
-  clearStreak,
-  clearStructuredProfile,
-  saveProfileSummary,
-} from '@/lib/db/sessions';
-import { clearProfile } from '@/lib/db/profile';
+import { saveActiveAccountUid } from '@/lib/db/sessions';
 import { useAppStore } from '@/stores/appStore';
 import { planSummary, useSubscriptionStore } from '@/stores/subscriptionStore';
 
@@ -334,15 +326,10 @@ export default function Account() {
               if (error) throw error;
 
               // True deletion: also wipe the local footprint and the cached
-              // entitlement, then drop the session.
-              useAppStore.getState().resetAll();
-              void clearMessages();
-              void clearProfile();
-              void clearStructuredProfile();
-              void clearStreak();
-              void clearDailyActivity();
-              void clearActivity();
-              void saveProfileSummary('');
+              // entitlement, then drop the session. Clearing the owner uid means
+              // the next sign-in on this device starts as a fresh owner.
+              await wipeLocalAccountData();
+              await saveActiveAccountUid(null);
               await useSubscriptionStore.getState().logOutAndReset();
               await supabase.auth.signOut();
               setAccount(null);

@@ -100,6 +100,13 @@ interface SubscriptionStore {
    *  when the server (authoritative) denies a turn the client meter hadn't yet
    *  caught as exhausted, so both agree and the read-only flow takes over. */
   exhaustFreeTaste: () => void;
+  /** Reset ONLY the free-taste meter — used when a different account takes over the
+   *  device, so the new identity's gate reflects its own server usage, not the
+   *  previous user's carried-over meter. Distinct from logOutAndReset, which also
+   *  tears down the RevenueCat session (wrong here: the new identity is already
+   *  aliased in). The server stays authoritative, so a fresh 0 self-corrects to a
+   *  403 on the first turn if that identity is already past its free taste. */
+  resetFreeUsage: () => void;
   resetDailyIfNewDay: () => void;
   recordTurnElapsed: (ms: number) => void;
   setCapBlocked: (opts: { tier: Exclude<Tier, null>; capSeconds: number }) => void;
@@ -393,6 +400,11 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   exhaustFreeTaste: () => {
     set({ freeSecondsUsed: FREE_TASTE_SECONDS });
     void persistFreeUsage(FREE_TASTE_SECONDS);
+  },
+
+  resetFreeUsage: () => {
+    set({ freeSecondsUsed: 0 });
+    void AsyncStorage.removeItem(FREE_USAGE_KEY);
   },
 
   hydrateUsageFromCache: async () => {

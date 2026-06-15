@@ -11,6 +11,8 @@ export const PRIVACY_POLICY_URL = 'https://www.codarti.com/parlez/privacy';
 export const TERMS_URL = 'https://www.codarti.com/parlez/terms';
 /** Public account-deletion page (Play data-safety link + in-app "delete on web"). */
 export const DELETE_ACCOUNT_URL = 'https://www.codarti.com/parlez/delete-account';
+/** Where money-back guarantee refund requests are sent (in-app mailto). */
+export const SUPPORT_EMAIL = 'support@codarti.com';
 
 /** Notice shown when the OS mic permission is off — tapping it opens Settings. */
 export const MIC_OFF_NOTICE = 'Microphone access is off — tap to open Settings.';
@@ -95,6 +97,13 @@ export const DAILY_GOAL_SECONDS = 10 * 60;
  */
 export const GUARANTEE_DAYS = 20;
 export const GUARANTEE_WINDOW_DAYS = 30;
+/**
+ * Grace period AFTER the guarantee window closes during which a qualified user can
+ * still claim their refund. Bounds the "Request a refund" CTA so it isn't parked in
+ * front of long-term happy subscribers forever: the guarantee card disappears once
+ * GUARANTEE_WINDOW_DAYS + this grace have elapsed since first launch.
+ */
+export const GUARANTEE_CLAIM_GRACE_DAYS = 14;
 
 /** Max correction cards shown per Marie turn (spec §5.3.2). */
 export const MAX_CORRECTIONS_PER_TURN = 2;
