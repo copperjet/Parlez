@@ -350,7 +350,9 @@ function LockedConversation() {
   const router = useRouter();
   const messages = useAppStore((s) => s.messages);
   const streakCount = useAppStore((s) => s.streakCount);
+  const personaName = voiceName(useAppStore((s) => s.settings.voice));
 
+  const listRef = useRef<FlatList<Message>>(null);
   const renderItem = useCallback(
     ({ item }: { item: Message }) => <MessageRow message={item} />,
     [],
@@ -363,29 +365,43 @@ function LockedConversation() {
         onStreakPress={() => router.push('/streak' as never)}
       />
       <FlatList
+        ref={listRef}
         data={messages}
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
+        // Land on the most recent turn — the read-only history opens where the
+        // conversation left off, not scrolled all the way back to the greeting.
+        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         style={styles.listFlex}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
       />
-      <Pressable
-        onPress={() => router.push('/paywall?reason=free' as never)}
-        accessibilityRole="button"
-        accessibilityLabel="Upgrade to keep speaking"
+      <View
         style={[
-          styles.upgradeBar,
-          { backgroundColor: colors.accent, paddingBottom: insets.bottom + Spacing.md },
+          styles.lockedDock,
+          {
+            backgroundColor: colors.background,
+            borderTopColor: colors.border,
+            paddingBottom: insets.bottom + Spacing.md,
+          },
         ]}>
-        <Ionicons name="flame" size={20} color={colors.onAccent} />
-        <Text style={[styles.upgradeText, { color: colors.onAccent }]}>
-          {streakCount > 0
-            ? `Day ${streakCount} · Upgrade to keep speaking`
-            : 'Upgrade to keep speaking'}
+        <Text style={[styles.lockedNote, { color: colors.textSecondary }]}>
+          That was your free session with {personaName}.
         </Text>
-        <Ionicons name="arrow-forward" size={18} color={colors.onAccent} />
-      </Pressable>
+        <Pressable
+          onPress={() => router.push('/paywall?reason=free' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Upgrade to keep speaking"
+          style={[styles.upgradeBar, { backgroundColor: colors.accent }]}>
+          <Ionicons name="flame" size={20} color={colors.onAccent} />
+          <Text style={[styles.upgradeText, { color: colors.onAccent }]}>
+            {streakCount > 0
+              ? `Day ${streakCount} · Upgrade to keep speaking`
+              : 'Upgrade to keep speaking'}
+          </Text>
+          <Ionicons name="arrow-forward" size={18} color={colors.onAccent} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -505,13 +521,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  lockedDock: {
+    paddingTop: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  lockedNote: { fontSize: FontSize.caption, textAlign: 'center' },
   upgradeBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
-    paddingTop: Spacing.md,
+    paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
+    borderRadius: Radius.pill,
   },
   upgradeText: { fontSize: FontSize.body, fontWeight: '700' },
 });

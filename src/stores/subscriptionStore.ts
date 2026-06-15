@@ -96,6 +96,10 @@ interface SubscriptionStore {
   // Usage actions.
   hydrateUsageFromCache: () => Promise<void>;
   hydrateFreeUsageFromCache: () => Promise<void>;
+  /** Mark the free taste fully spent — flips the conversation to read-only. Used
+   *  when the server (authoritative) denies a turn the client meter hadn't yet
+   *  caught as exhausted, so both agree and the read-only flow takes over. */
+  exhaustFreeTaste: () => void;
   resetDailyIfNewDay: () => void;
   recordTurnElapsed: (ms: number) => void;
   setCapBlocked: (opts: { tier: Exclude<Tier, null>; capSeconds: number }) => void;
@@ -384,6 +388,11 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
 
   hydrateFreeUsageFromCache: async () => {
     set({ freeSecondsUsed: await readFreeUsage() });
+  },
+
+  exhaustFreeTaste: () => {
+    set({ freeSecondsUsed: FREE_TASTE_SECONDS });
+    void persistFreeUsage(FREE_TASTE_SECONDS);
   },
 
   hydrateUsageFromCache: async () => {

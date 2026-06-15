@@ -52,7 +52,6 @@ import {
 } from '@/lib/db/sessions';
 import { refreshStreakFromHistory, todayLocal } from '@/lib/streak';
 import { consolidateProfile } from '@/lib/services';
-import { router } from 'expo-router';
 
 import { DailyCapError, NotEntitledError } from '@/lib/services/supabaseService';
 import {
@@ -616,12 +615,16 @@ export function useTurnEngine(online: boolean): TurnEngine {
       }
 
       if (notEntitled) {
-        // Re-pull RevenueCat truth (flips the gate live) and send the user to the
-        // paywall rather than apologising for a server error.
+        // Server (authoritative) denied the turn. Re-pull RevenueCat truth (flips
+        // a churned subscriber to non-premium) AND mark the free taste spent — the
+        // client meter may trail the server, which also bills the greeting + silence
+        // turns. Both flip canChat → false, so the conversation screen takes over:
+        // read-only history + the celebratory reason=free paywall. No manual nav.
         settleOptimistic();
-        void useSubscriptionStore.getState().refresh();
+        const sub = useSubscriptionStore.getState();
+        void sub.refresh();
+        sub.exhaustFreeTaste();
         store().setTurnState('idle');
-        router.replace('/paywall' as never);
         return;
       }
 
@@ -1052,11 +1055,13 @@ export function useTurnEngine(online: boolean): TurnEngine {
           response = await store().service.openTurn(buildContext());
         } catch (e) {
           if (e instanceof NotEntitledError) {
-            // Server says the cached entitlement is stale — refresh and route to
-            // the paywall, same as a reply turn.
-            void useSubscriptionStore.getState().refresh();
+            // Stale entitlement / free taste spent at open — same handling as a
+            // reply turn: refresh RC truth + mark free spent, then let canChat flip
+            // the screen to the read-only + celebratory-paywall flow. No manual nav.
+            const sub = useSubscriptionStore.getState();
+            void sub.refresh();
+            sub.exhaustFreeTaste();
             store().setTurnState('idle');
-            router.replace('/paywall' as never);
             return;
           }
           if (e instanceof DailyCapError) {
