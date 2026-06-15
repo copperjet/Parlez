@@ -22,15 +22,20 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Image as ExpoImage } from 'expo-image';
 import type { PurchasesPackage } from 'react-native-purchases';
 
 import { PRIVACY_POLICY_URL, TERMS_URL } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
+import { useAppStore } from '@/stores/appStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 type TierId = 'monthly' | 'annual' | 'lifetime';
 
 const PRIVACY_URL = PRIVACY_POLICY_URL;
+
+/** Animated flame celebrating the streak the free session just earned. */
+const BURNING_FLAME = require('../../assets/images/burning flame.gif');
 
 /**
  * Outcome guarantee shown under the CTA (spec: speak-or-refund). Annual and
@@ -79,6 +84,7 @@ export default function Paywall() {
   const purchase = useSubscriptionStore((s) => s.purchase);
   const restore = useSubscriptionStore((s) => s.restore);
   const refresh = useSubscriptionStore((s) => s.refresh);
+  const streakCount = useAppStore((s) => s.streakCount);
 
   const tiers = useMemo(() => {
     const map: Partial<Record<TierId, PurchasesPackage>> = {};
@@ -108,14 +114,28 @@ export default function Paywall() {
     }
   }, [isPremium, isTrialing, router]);
 
-  // Hard-gate: swallow Android back so users can't slip past. Focus-scoped so
-  // the gate doesn't leak to screens stacked on top of the paywall.
+  // Soft reasons (free-taste exhausted, daily cap) are dismissible back to the
+  // now read-only conversation — the server still gates actual chat, so there's
+  // nothing to "slip past". A hard open (no reason) still swallows Android back.
+  const dismissible = reasonFree || reasonCap;
+  const onDismiss = useCallback(() => {
+    // Reached via push (upgrade bar / celebratory) or replace (turn-engine 403).
+    // Prefer popping back to the conversation beneath; fall back to a replace.
+    if (router.canGoBack()) router.back();
+    else router.replace('/conversation' as never);
+  }, [router]);
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== 'android') return;
-      const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (dismissible) {
+          onDismiss();
+          return true;
+        }
+        return true;
+      });
       return () => sub.remove();
-    }, []),
+    }, [dismissible, onDismiss]),
   );
 
   const selectedPkg = tiers[selected] ?? null;
@@ -155,6 +175,17 @@ export default function Paywall() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
+        {dismissible ? (
+          <Pressable
+            onPress={onDismiss}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={12}>
+            <Ionicons name="close" size={26} color={colors.textSecondary} />
+          </Pressable>
+        ) : (
+          <View />
+        )}
         <Pressable
           onPress={onRestore}
           disabled={loading}
@@ -174,6 +205,23 @@ export default function Paywall() {
 
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + Spacing.xl }]}>
+        {reasonFree ? (
+          <View style={styles.celebrate}>
+            <View style={styles.flameWrap}>
+              <ExpoImage
+                source={BURNING_FLAME}
+                style={styles.flame}
+                contentFit="contain"
+                autoplay
+              />
+            </View>
+            <Text style={[styles.celebrateLabel, { color: colors.accent }]}>
+              {streakCount <= 1
+                ? '🔥 Day 1 — your first flame'
+                : `🔥 Day ${streakCount} — keep it burning`}
+            </Text>
+          </View>
+        ) : null}
         <Text style={[styles.title, { color: colors.text }]}>
           {reasonFree
             ? 'You just spoke French. Keep going.'
@@ -338,12 +386,24 @@ const styles = StyleSheet.create({
   loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.sm,
   },
   restoreLink: { fontSize: FontSize.caption, fontWeight: '600' },
   body: { paddingHorizontal: Spacing.lg, gap: Spacing.md },
+  celebrate: { alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xs },
+  flameWrap: {
+    width: 104,
+    height: 104,
+    borderRadius: Radius.pill,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flame: { width: 84, height: 84 },
+  celebrateLabel: { fontSize: FontSize.body, fontWeight: '700' },
   title: {
     fontSize: FontSize.display,
     fontWeight: '700',

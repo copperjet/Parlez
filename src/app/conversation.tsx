@@ -28,7 +28,7 @@ import {
   Waveform,
   type WaveformMode,
 } from '@/components';
-import { PaywallGate } from '@/components/PaywallGate';
+import { useCanConverse } from '@/components/PaywallGate';
 import { MIC_OFF_NOTICE, voiceName } from '@/lib/constants';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useNetwork } from '@/lib/useNetwork';
@@ -48,7 +48,8 @@ function MessageRow({
   onReplay,
 }: {
   message: Message;
-  onReplay: (text: string) => void;
+  /** Omitted in the read-only locked view — no replay button is shown. */
+  onReplay?: (text: string) => void;
 }) {
   return (
     <View>
@@ -58,7 +59,9 @@ function MessageRow({
         translation={message.translation}
         segments={message.segments}
         faint={message.pending}
-        onReplay={message.speaker === 'marie' ? () => onReplay(message.text) : undefined}
+        onReplay={
+          message.speaker === 'marie' && onReplay ? () => onReplay(message.text) : undefined
+        }
       />
       {message.corrections?.map((c, i) => (
         <CorrectionCard key={`${message.id}-c${i}`} correction={c} />
@@ -336,16 +339,91 @@ function CapSheet() {
 }
 
 /**
+ * Read-only conversation shown once the free taste is spent (and the user isn't
+ * subscribed). The history stays on screen — it's the proof of value — but the
+ * mic/input is replaced by an upgrade bar. The turn engine is NOT mounted, so a
+ * locked user makes no server calls. Tapping the bar opens the paywall.
+ */
+function LockedConversation() {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const messages = useAppStore((s) => s.messages);
+  const streakCount = useAppStore((s) => s.streakCount);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Message }) => <MessageRow message={item} />,
+    [],
+  );
+
+  return (
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <MarieHeader
+        onSettingsPress={() => router.push('/settings')}
+        onStreakPress={() => router.push('/streak' as never)}
+      />
+      <FlatList
+        data={messages}
+        keyExtractor={(m) => m.id}
+        renderItem={renderItem}
+        style={styles.listFlex}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+      />
+      <Pressable
+        onPress={() => router.push('/paywall?reason=free' as never)}
+        accessibilityRole="button"
+        accessibilityLabel="Upgrade to keep speaking"
+        style={[
+          styles.upgradeBar,
+          { backgroundColor: colors.accent, paddingBottom: insets.bottom + Spacing.md },
+        ]}>
+        <Ionicons name="flame" size={20} color={colors.onAccent} />
+        <Text style={[styles.upgradeText, { color: colors.onAccent }]}>
+          {streakCount > 0
+            ? `Day ${streakCount} · Upgrade to keep speaking`
+            : 'Upgrade to keep speaking'}
+        </Text>
+        <Ionicons name="arrow-forward" size={18} color={colors.onAccent} />
+      </Pressable>
+    </View>
+  );
+}
+
+/**
  * The conversation screen — the entire app (spec §4.1). One screen: Marie's
  * header, the scrolling transcript, the waveform, and the mic button.
+ *
+ * Self-gating: an entitled/trialing user — or one still inside the free taste —
+ * gets the full live conversation; once the free taste is spent it flips to the
+ * read-only LockedConversation. The flip from chatting → locked fires the
+ * celebratory paywall once (they just lit their first flame); a relaunch while
+ * already locked lands straight in read-only without a paywall.
  */
 export default function Conversation() {
   const sessionEpoch = useAppStore((s) => s.sessionEpoch);
+  const { canChat, ready } = useCanConverse();
+  const router = useRouter();
+  const wasChatting = useRef(false);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (canChat) {
+      wasChatting.current = true;
+    } else if (wasChatting.current) {
+      // Just crossed the free-taste line in-session — celebrate, then offer.
+      wasChatting.current = false;
+      router.push('/paywall?reason=free' as never);
+    }
+  }, [canChat, ready, router]);
+
+  if (!ready) return null;
+  if (!canChat) return <LockedConversation />;
   return (
-    <PaywallGate>
+    <>
       <ConversationSession key={sessionEpoch} />
       <CapSheet />
-    </PaywallGate>
+    </>
   );
 }
 
@@ -427,4 +505,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  upgradeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingTop: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+  },
+  upgradeText: { fontSize: FontSize.body, fontWeight: '700' },
 });

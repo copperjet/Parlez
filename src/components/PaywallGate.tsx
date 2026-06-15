@@ -28,18 +28,18 @@ export function useEntitlement(): {
  * freeSecondsUsed so crossing the allowance mid-session re-renders the gate and
  * bounces them to the paywall.
  */
-export function useCanConverse(): { allowed: boolean; ready: boolean } {
+export function useCanConverse(): { canChat: boolean; ready: boolean } {
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isTrialing = useSubscriptionStore((s) => s.isTrialing);
   const ready = useSubscriptionStore((s) => s.ready);
   const freeSecondsUsed = useSubscriptionStore((s) => s.freeSecondsUsed);
   const hasFreeTaste = freeSecondsUsed < FREE_TASTE_SECONDS;
-  return { allowed: isPremium || isTrialing || hasFreeTaste, ready };
+  return { canChat: isPremium || isTrialing || hasFreeTaste, ready };
 }
 
 export function PaywallGate({ children }: { children: ReactNode }) {
-  const { allowed, ready } = useCanConverse();
+  const { canChat, ready } = useCanConverse();
   if (!ready) return null;
-  if (!allowed) return <Redirect href={'/paywall?reason=free' as never} />;
+  if (!canChat) return <Redirect href={'/paywall?reason=free' as never} />;
   return <>{children}</>;
 }
