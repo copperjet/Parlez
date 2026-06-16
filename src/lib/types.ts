@@ -71,6 +71,8 @@ export interface TurnContext {
   learnerName?: string | null;
   /** Topics the learner cares about, accreted from past turns. */
   interests?: string[];
+  /** Durable personal facts (location, job, family…) — never forgotten. */
+  profileFacts?: Record<string, string>;
   /** Consecutive-day practice streak. Marie may acknowledge it ≥ 3. */
   streakDays?: number;
 }
@@ -95,6 +97,11 @@ export interface TurnResponse {
   learnerName?: string | null;
   /** Optional updated interest list — Marie keeps the typed profile current. */
   interests?: string[];
+  /**
+   * Durable personal facts to merge (key→value). Merge semantics: keys present
+   * overwrite, keys absent are kept. Empty / omitted on most turns.
+   */
+  profileFacts?: Record<string, string>;
 }
 
 /** Phases of one conversational turn (spec §3.3, §6.3). */

@@ -276,6 +276,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         personaName: voiceName(s.settings.voice),
         learnerName: s.learnerName ?? null,
         interests: s.interests,
+        profileFacts: s.profileFacts,
         streakDays: s.streakCount,
       };
     };
@@ -326,8 +327,28 @@ export function useTurnEngine(online: boolean): TurnEngine {
       notes: string[],
       learnerName: string | null | undefined,
       interests: string[] | undefined,
+      profileFacts: Record<string, string> | undefined,
     ) => {
       const s = store();
+      // Durable personal facts: merge (incoming keys win, omitted keys kept),
+      // bounded so the map — and the prompt line it feeds — can't grow without
+      // limit. Last-write-wins per key never forgets a fact the AI didn't re-send.
+      if (profileFacts && Object.keys(profileFacts).length > 0) {
+        const merged: Record<string, string> = { ...s.profileFacts };
+        for (const [k, v] of Object.entries(profileFacts)) {
+          const key = k.trim().slice(0, 32);
+          const value = typeof v === 'string' ? v.trim().slice(0, 160) : '';
+          if (key && value) merged[key] = value;
+        }
+        // Cap total facts — keep the most recently updated by trimming oldest keys.
+        const keys = Object.keys(merged);
+        const capped =
+          keys.length > 14
+            ? Object.fromEntries(keys.slice(keys.length - 14).map((k) => [k, merged[k]]))
+            : merged;
+        s.setProfileFacts(capped);
+        void saveStructuredProfile({ profileFacts: capped });
+      }
       if (learnerName !== undefined) {
         const next = learnerName ? learnerName.trim() : null;
         if (next !== s.learnerName) {
@@ -438,6 +459,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         response.profileNotes,
         response.learnerName,
         response.interests,
+        response.profileFacts,
       );
 
       s.setTurnState('marie_speaking');

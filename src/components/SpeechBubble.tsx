@@ -16,6 +16,9 @@ interface SpeechBubbleProps {
   segments?: MessageSegment[];
   /** Faint rendering for live, not-yet-final transcription (spec §3.3). */
   faint?: boolean;
+  /** Render the full text immediately — no typewriter reveal. Set for restored
+   *  history so a returning user's backlog appears static, not typing itself out. */
+  instant?: boolean;
   /** Re-hear this message — only provided for partner bubbles. */
   onReplay?: () => void;
 }
@@ -83,6 +86,7 @@ export function SpeechBubble({
   translation,
   segments,
   faint,
+  instant,
   onReplay,
 }: SpeechBubbleProps) {
   const { colors } = useTheme();
@@ -106,7 +110,7 @@ export function SpeechBubble({
   const didAnimateRef = useRef(false);
   useEffect(() => {
     if (animTimerRef.current) clearTimeout(animTimerRef.current);
-    if (!isMarie || faint || hasSegments || didAnimateRef.current) {
+    if (!isMarie || faint || hasSegments || instant || didAnimateRef.current) {
       setDisplayText(text);
       return;
     }
@@ -120,7 +124,7 @@ export function SpeechBubble({
     };
     step();
     return () => { if (animTimerRef.current) clearTimeout(animTimerRef.current); };
-  }, [text, isMarie, faint, hasSegments]);
+  }, [text, isMarie, faint, hasSegments, instant]);
 
   const bubbleInner = (
     <>

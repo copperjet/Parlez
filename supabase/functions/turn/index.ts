@@ -54,6 +54,27 @@ interface AiResult {
   levelSignal: 'up' | 'hold' | 'down';
   learnerName: string | null;
   interests: string[];
+  profileFacts: Record<string, string>;
+}
+
+/** Bounds on the durable learner-facts map — keeps the prompt + storage small. */
+const MAX_FACTS = 14;
+const MAX_FACT_KEY = 32;
+const MAX_FACT_VALUE = 160;
+
+/** Coerce an untrusted value into a bounded key→value facts map. */
+function sanitizeProfileFacts(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k !== 'string' || typeof v !== 'string') continue;
+    const key = k.trim().slice(0, MAX_FACT_KEY);
+    const value = v.trim().slice(0, MAX_FACT_VALUE);
+    if (!key || !value) continue;
+    out[key] = value;
+    if (Object.keys(out).length >= MAX_FACTS) break;
+  }
+  return out;
 }
 
 function normalizeContext(raw: unknown): PromptContext {
@@ -80,6 +101,7 @@ function normalizeContext(raw: unknown): PromptContext {
         ? c.learnerName.trim()
         : null,
     interests,
+    profileFacts: sanitizeProfileFacts(c.profileFacts),
     streakDays:
       typeof c.streakDays === 'number' && c.streakDays > 0
         ? Math.floor(c.streakDays)
@@ -313,6 +335,7 @@ function parseAi(text: string): AiResult {
     levelSignal: sig === 'up' || sig === 'down' ? sig : 'hold',
     learnerName,
     interests,
+    profileFacts: sanitizeProfileFacts(parsed.profileFacts),
   };
 }
 
@@ -405,6 +428,7 @@ function mockTurn(mode: TurnMode, personaName: string): { transcript: string } &
       levelSignal: 'hold',
       learnerName: null,
       interests: [],
+      profileFacts: {},
     };
   }
   return {
@@ -417,6 +441,7 @@ function mockTurn(mode: TurnMode, personaName: string): { transcript: string } &
     levelSignal: 'hold',
     learnerName: null,
     interests: [],
+    profileFacts: {},
   };
 }
 
@@ -669,6 +694,7 @@ Deno.serve(async (req: Request) => {
         levelSignal: 'hold',
         learnerName: null,
         interests: [],
+        profileFacts: {},
       });
     }
 

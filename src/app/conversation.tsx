@@ -49,10 +49,13 @@ function waveformModeFor(turnState: TurnState): WaveformMode {
 function MessageRow({
   message,
   onReplay,
+  historical,
 }: {
   message: Message;
   /** Omitted in the read-only locked view — no replay button is shown. */
   onReplay?: (text: string) => void;
+  /** Restored backlog from a prior session — render instantly, no typewriter. */
+  historical?: boolean;
 }) {
   return (
     <View>
@@ -62,6 +65,7 @@ function MessageRow({
         translation={message.translation}
         segments={message.segments}
         faint={message.pending}
+        instant={historical}
         onReplay={
           message.speaker === 'marie' && onReplay ? () => onReplay(message.text) : undefined
         }
@@ -84,6 +88,10 @@ function ConversationSession() {
   const online = useNetwork();
 
   const messages = useAppStore((s) => s.messages);
+  // Prior-session backlog rendered above this session's live turns so the user
+  // can scroll back and reference past conversation. Display-only — it's never
+  // fed to the AI (see appStore.renderedHistory).
+  const renderedHistory = useAppStore((s) => s.renderedHistory);
   const turnState = useAppStore((s) => s.turnState);
   const liveTranscript = useAppStore((s) => s.liveTranscript);
   const errorNotice = useAppStore((s) => s.errorNotice);
@@ -127,9 +135,23 @@ function ConversationSession() {
     [],
   );
 
+  // Backlog first, then this session's live turns. Concatenate only when there's
+  // a backlog so a fresh install keeps the original (empty) array identity.
+  const transcript = useMemo(
+    () => (renderedHistory.length ? [...renderedHistory, ...messages] : messages),
+    [renderedHistory, messages],
+  );
+  // Ids of restored backlog — those render instantly (no typewriter reveal).
+  const historicalIds = useMemo(
+    () => new Set(renderedHistory.map((m) => m.id)),
+    [renderedHistory],
+  );
+
   const renderItem = useCallback(
-    ({ item }: { item: Message }) => <MessageRow message={item} onReplay={replay} />,
-    [replay],
+    ({ item }: { item: Message }) => (
+      <MessageRow message={item} onReplay={replay} historical={historicalIds.has(item.id)} />
+    ),
+    [replay, historicalIds],
   );
 
   const waveMode = useMemo(() => waveformModeFor(turnState), [turnState]);
@@ -256,7 +278,7 @@ function ConversationSession() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           ref={listRef}
-          data={messages}
+          data={transcript}
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
           onContentSizeChange={scrollToEnd}
@@ -393,13 +415,29 @@ function LockedConversation() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const messages = useAppStore((s) => s.messages);
+  const renderedHistory = useAppStore((s) => s.renderedHistory);
   const streakCount = useAppStore((s) => s.streakCount);
+  const wasEverPremium = useSubscriptionStore((s) => s.wasEverPremium);
   const personaName = voiceName(useAppStore((s) => s.settings.voice));
+
+  // Show the full backlog as proof of value, not just this session's turns —
+  // on a relaunch into the locked view `messages` is empty, so without the
+  // backlog the history would read blank.
+  const transcript = useMemo(
+    () => (renderedHistory.length ? [...renderedHistory, ...messages] : messages),
+    [renderedHistory, messages],
+  );
+  const historicalIds = useMemo(
+    () => new Set(renderedHistory.map((m) => m.id)),
+    [renderedHistory],
+  );
 
   const listRef = useRef<FlatList<Message>>(null);
   const renderItem = useCallback(
-    ({ item }: { item: Message }) => <MessageRow message={item} />,
-    [],
+    ({ item }: { item: Message }) => (
+      <MessageRow message={item} historical={historicalIds.has(item.id)} />
+    ),
+    [historicalIds],
   );
 
   return (
@@ -410,7 +448,7 @@ function LockedConversation() {
       />
       <FlatList
         ref={listRef}
-        data={messages}
+        data={transcript}
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
         // Land on the most recent turn — the read-only history opens where the
@@ -430,7 +468,9 @@ function LockedConversation() {
           },
         ]}>
         <Text style={[styles.lockedNote, { color: colors.textSecondary }]}>
-          That was your free session with {personaName}.
+          {wasEverPremium
+            ? 'Your subscription has ended.'
+            : `That was your free session with ${personaName}.`}
         </Text>
         <Pressable
           onPress={() => router.push('/paywall?reason=free' as never)}

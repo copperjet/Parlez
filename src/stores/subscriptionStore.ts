@@ -57,6 +57,9 @@ interface PersistedUsage {
 interface SubscriptionStore {
   isPremium: boolean;
   isTrialing: boolean;
+  /** Sticky: true once the user has EVER been premium on this install. Drives the
+   *  locked-screen copy split (churned subscriber vs never-paid free-taste user). */
+  wasEverPremium: boolean;
   tier: Tier;
   entitlement: PurchasesEntitlementInfo | null;
   offerings: PurchasesOffering | null;
@@ -208,6 +211,7 @@ let listenerRegistered = false;
 export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   isPremium: false,
   isTrialing: false,
+  wasEverPremium: false,
   tier: null,
   entitlement: null,
   offerings: null,
@@ -229,6 +233,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       set({
         isPremium: cached.isPremium,
         isTrialing: cached.isTrialing,
+        wasEverPremium: cached.everPremium ?? cached.isPremium,
         tier,
         tierCapSeconds: capForTier(tier),
         lastFetchedAt: cached.fetchedAt,
@@ -364,6 +369,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
     set({
       isPremium: false,
       isTrialing: false,
+      wasEverPremium: false,
       tier: null,
       entitlement: null,
       lastFetchedAt: null,
@@ -380,8 +386,12 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
     const next = readEntitlement(info);
     const fetchedAt = Date.now();
     const tierCap = capForTier(next.tier);
+    // Sticky — only ever flips false→true, so a transient empty customerInfo or a
+    // churn can't erase the fact that this user paid at some point this install.
+    const everPremium = get().wasEverPremium || next.isPremium;
     set({
       ...next,
+      wasEverPremium: everPremium,
       tierCapSeconds: tierCap,
       lastFetchedAt: fetchedAt,
     });
@@ -389,6 +399,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       isPremium: next.isPremium,
       isTrialing: next.isTrialing,
       tier: next.tier,
+      everPremium,
       fetchedAt,
     });
   },

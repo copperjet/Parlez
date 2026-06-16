@@ -23,6 +23,12 @@ export interface CachedEntitlement {
   isTrialing: boolean;
   /** Persisted so the soft daily-cap works offline before refresh() lands. */
   tier?: 'monthly' | 'annual' | 'lifetime' | null;
+  /**
+   * Sticky: true once the user has EVER held the entitlement on this install.
+   * Lets the locked screen tell a churned ex-subscriber ("subscription ended")
+   * from a never-paid free-taste user ("that was your free session").
+   */
+  everPremium?: boolean;
   fetchedAt: number;
 }
 

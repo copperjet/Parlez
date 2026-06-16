@@ -62,6 +62,12 @@ interface AppStore {
   messages: Message[];
   /** Prior-session transcript — feeds the AI's context, never rendered (spec §3.2). */
   priorHistory: Message[];
+  /**
+   * Larger prior-session backlog rendered above the live transcript so a
+   * returning user can scroll back and reference past turns. Display-only —
+   * NOT fed to the AI (that stays bounded to {@link priorHistory}).
+   */
+  renderedHistory: Message[];
   turnState: TurnState;
   /** Faint live STT text shown while the user records (spec §3.3). */
   liveTranscript: string;
@@ -75,6 +81,13 @@ interface AppStore {
   /** Typed profile slots — what Marie has learned by category, not by sentence. */
   learnerName: string | null;
   interests: string[];
+  /**
+   * Durable personal facts (location, occupation, family, goals…) as a small
+   * key→value map. Persisted forever until the user wipes their data, and NOT
+   * routed through the lossy profileSummary consolidation — so who the learner
+   * is stays remembered. Injected compactly into the system prompt.
+   */
+  profileFacts: Record<string, string>;
 
   /** Calendar-day streak — surfaced in settings only. NOT cleared on memory reset. */
   streakCount: number;
@@ -111,8 +124,10 @@ interface AppStore {
     profileSummary: string;
     gapSinceLastSession: number | null;
     priorHistory: Message[];
+    renderedHistory: Message[];
     learnerName: string | null;
     interests: string[];
+    profileFacts: Record<string, string>;
     streakCount: number;
     lastSessionDate: string | null;
     firstLaunchDate: string | null;
@@ -139,6 +154,8 @@ interface AppStore {
     learnerName?: string | null;
     interests?: string[];
   }) => void;
+  /** Replace the durable personal-facts map (merge logic lives in the turn loop). */
+  setProfileFacts: (facts: Record<string, string>) => void;
   setStreak: (count: number, date: string | null) => void;
   setTurnsSinceConsolidation: (count: number) => void;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -156,12 +173,14 @@ export const useAppStore = create<AppStore>((set) => ({
   settings: DEFAULT_SETTINGS,
   messages: [],
   priorHistory: [],
+  renderedHistory: [],
   turnState: 'idle',
   liveTranscript: '',
   errorNotice: null,
   profileSummary: '',
   learnerName: null,
   interests: [],
+  profileFacts: {},
   streakCount: 0,
   lastSessionDate: null,
   firstLaunchDate: null,
@@ -180,8 +199,10 @@ export const useAppStore = create<AppStore>((set) => ({
       profileSummary: state.profileSummary,
       gapSinceLastSession: state.gapSinceLastSession,
       priorHistory: state.priorHistory,
+      renderedHistory: state.renderedHistory,
       learnerName: state.learnerName,
       interests: state.interests,
+      profileFacts: state.profileFacts,
       streakCount: state.streakCount,
       lastSessionDate: state.lastSessionDate,
       firstLaunchDate: state.firstLaunchDate,
@@ -246,6 +267,8 @@ export const useAppStore = create<AppStore>((set) => ({
       interests: interests === undefined ? s.interests : interests,
     })),
 
+  setProfileFacts: (profileFacts) => set({ profileFacts }),
+
   setStreak: (streakCount, lastSessionDate) =>
     set({ streakCount, lastSessionDate }),
 
@@ -263,9 +286,11 @@ export const useAppStore = create<AppStore>((set) => ({
     set((s) => ({
       messages: [],
       priorHistory: [],
+      renderedHistory: [],
       profileSummary: '',
       learnerName: null,
       interests: [],
+      profileFacts: {},
       turnsSinceConsolidation: 0,
       gapSinceLastSession: null,
       liveTranscript: '',
@@ -286,9 +311,11 @@ export const useAppStore = create<AppStore>((set) => ({
       levelUpStreak: 0,
       messages: [],
       priorHistory: [],
+      renderedHistory: [],
       profileSummary: '',
       learnerName: null,
       interests: [],
+      profileFacts: {},
       streakCount: 0,
       lastSessionDate: null,
       turnsSinceConsolidation: 0,

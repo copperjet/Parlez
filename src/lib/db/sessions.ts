@@ -36,9 +36,18 @@ export interface PersistedState {
   gapSinceLastSession: number | null;
   /** Prior-session transcript — feeds the AI, never shown on screen (spec §3.2). */
   priorHistory: Message[];
+  /**
+   * Larger prior-session backlog rendered above the live conversation so a
+   * returning user can scroll back and reference what they've said. Display-only:
+   * NEVER fed to the AI (that stays bounded to {@link priorHistory}), so the
+   * context window and request payload are unaffected.
+   */
+  renderedHistory: Message[];
   /** Structured profile slots — the typed counterpart to profileSummary. */
   learnerName: string | null;
   interests: string[];
+  /** Durable personal facts (location, occupation, family…) — never decayed. */
+  profileFacts: Record<string, string>;
   /** Daily-streak state — surfaced in settings only. */
   streakCount: number;
   lastSessionDate: string | null;
@@ -62,14 +71,40 @@ const DEFAULT_STATE: PersistedState = {
   profileSummary: '',
   gapSinceLastSession: null,
   priorHistory: [],
+  renderedHistory: [],
   learnerName: null,
   interests: [],
+  profileFacts: {},
   streakCount: 0,
   lastSessionDate: null,
   firstLaunchDate: null,
   isFirstTimeUser: true,
   turnsSinceConsolidation: 0,
 };
+
+/** Messages fed to the AI as resume context (spec §3.2) — bounded window. */
+const AI_HISTORY_WINDOW = 12;
+/** Messages restored to the on-screen backlog so a returning user can scroll
+ *  back and reference past turns. Display-only — never sent to the AI. */
+const TRANSCRIPT_BACKLOG_LIMIT = 200;
+
+/** Parse the persisted durable-facts JSON into a bounded key→value map. */
+function parseProfileFacts(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof k === 'string' && typeof v === 'string' && k.trim() && v.trim()) {
+        out[k.trim()] = v.trim();
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 /** Today as YYYY-MM-DD local (kept local to avoid a streak.ts import cycle). */
 function todayLocalDate(): string {
@@ -109,6 +144,11 @@ export async function loadPersistedState(): Promise<PersistedState> {
       Number.isFinite(turnsSinceRaw) && turnsSinceRaw > 0 ? turnsSinceRaw : 0;
     const learnerNameRaw = kv.get('learnerName') ?? '';
     const learnerName = learnerNameRaw.trim() ? learnerNameRaw.trim() : null;
+    const profileFacts = parseProfileFacts(kv.get('profileFacts'));
+
+    // One read serves both: the full backlog is rendered for the user to scroll,
+    // while only its tail (the bounded AI window) is handed to Marie as context.
+    const backlog = await loadRecentMessages(TRANSCRIPT_BACKLOG_LIMIT);
 
     return {
       hasOnboarded: kv.get('hasOnboarded') === 'true',
@@ -119,9 +159,11 @@ export async function loadPersistedState(): Promise<PersistedState> {
         : DEFAULT_SETTINGS,
       profileSummary: kv.get('profileSummary') ?? '',
       gapSinceLastSession: gap,
-      priorHistory: await loadRecentMessages(),
+      priorHistory: backlog.slice(-AI_HISTORY_WINDOW),
+      renderedHistory: backlog,
       learnerName,
       interests,
+      profileFacts,
       streakCount,
       lastSessionDate: (kv.get('lastSessionDate') || null) ?? null,
       firstLaunchDate,
@@ -171,6 +213,7 @@ export function saveProfileSummary(summary: string): Promise<void> {
 export function saveStructuredProfile(input: {
   learnerName?: string | null;
   interests?: string[];
+  profileFacts?: Record<string, string>;
 }): Promise<void> {
   const entries: Record<string, string> = {};
   if (input.learnerName !== undefined) {
@@ -178,6 +221,9 @@ export function saveStructuredProfile(input: {
   }
   if (input.interests !== undefined) {
     entries.interests = input.interests.join(',');
+  }
+  if (input.profileFacts !== undefined) {
+    entries.profileFacts = JSON.stringify(input.profileFacts);
   }
   return saveKv(entries);
 }
@@ -302,7 +348,7 @@ export function saveTurnsSinceConsolidation(count: number): Promise<void> {
 
 /** Full structured-profile wipe — used by "Delete all my data". */
 export function clearStructuredProfile(): Promise<void> {
-  return saveKv({ learnerName: '', interests: '' });
+  return saveKv({ learnerName: '', interests: '', profileFacts: '{}' });
 }
 
 /** Full streak wipe — used by "Delete all my data". */

@@ -36,6 +36,8 @@ interface SyncState {
   /** Typed profile slots — extension for cross-device continuity. */
   learnerName: string | null;
   interests: string[];
+  /** Durable personal facts — synced so a reinstall never forgets who they are. */
+  profileFacts: Record<string, string>;
   /** Engagement state — survives reinstall so the streak isn't "punished". */
   streakCount: number;
   lastSessionDate: string | null;
@@ -57,6 +59,7 @@ export async function pushState(): Promise<boolean> {
     profileSummary: s.profileSummary,
     learnerName: s.learnerName,
     interests: s.interests,
+    profileFacts: s.profileFacts,
     streakCount: s.streakCount,
     lastSessionDate: s.lastSessionDate,
   };
@@ -96,6 +99,14 @@ export async function pullState(): Promise<'applied' | 'absent' | 'error'> {
   const interests = Array.isArray(remote.interests)
     ? remote.interests
     : store.interests;
+  // Union local + remote facts — additive so neither side loses a fact the other
+  // hasn't seen; remote wins on a key conflict (more recently synced truth).
+  const profileFacts =
+    remote.profileFacts &&
+    typeof remote.profileFacts === 'object' &&
+    !Array.isArray(remote.profileFacts)
+      ? { ...store.profileFacts, ...remote.profileFacts }
+      : store.profileFacts;
 
   // Streak reconciliation — never lose a streak unjustifiably, never resurrect a
   // dead one. Last-write-wins would let an old account clobber a higher local
@@ -146,8 +157,10 @@ export async function pullState(): Promise<'applied' | 'absent' | 'error'> {
     profileSummary,
     gapSinceLastSession: store.gapSinceLastSession,
     priorHistory: store.priorHistory,
+    renderedHistory: store.renderedHistory,
     learnerName,
     interests,
+    profileFacts,
     streakCount,
     lastSessionDate,
     firstLaunchDate: store.firstLaunchDate,
@@ -156,7 +169,7 @@ export async function pullState(): Promise<'applied' | 'absent' | 'error'> {
   });
   void saveLevel(level);
   void saveProfileSummary(profileSummary);
-  void saveStructuredProfile({ learnerName, interests });
+  void saveStructuredProfile({ learnerName, interests, profileFacts });
   void saveStreak(streakCount, lastSessionDate);
   return 'applied';
 }

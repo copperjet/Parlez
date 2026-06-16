@@ -123,9 +123,26 @@ function serializeContext(ctx: TurnContext) {
     personaName: ctx.personaName,
     learnerName: ctx.learnerName ?? null,
     interests: ctx.interests ?? [],
+    profileFacts: ctx.profileFacts ?? {},
     streakDays: ctx.streakDays ?? 0,
     history: ctx.history.slice(-10).map((m) => ({ speaker: m.speaker, text: m.text })),
   };
+}
+
+/** Coerce an untrusted value into a bounded key→value facts map. Mirrors the
+ *  server's sanitizeProfileFacts so client and server agree on the shape. */
+function sanitizeProfileFacts(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k !== 'string' || typeof v !== 'string') continue;
+    const key = k.trim().slice(0, 32);
+    const value = v.trim().slice(0, 160);
+    if (!key || !value) continue;
+    out[key] = value;
+    if (Object.keys(out).length >= 14) break;
+  }
+  return out;
 }
 
 /** Coerce the BFF's JSON into a well-formed TurnResponse. */
@@ -174,6 +191,7 @@ function parseTurnResponse(raw: unknown): TurnResponse {
     levelSignal: (signal === 'up' || signal === 'down' ? signal : 'hold') as LevelSignal,
     learnerName,
     interests,
+    profileFacts: sanitizeProfileFacts(r.profileFacts),
   };
 }
 

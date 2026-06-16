@@ -16,6 +16,13 @@ export interface PromptContext {
   /** Optional structured profile slots (typed counterpart to profileSummary). */
   learnerName?: string | null;
   interests?: string[];
+  /**
+   * Durable personal facts about the learner (location, occupation, family,
+   * goals…) as a small key→value map. Persisted forever (until the user wipes
+   * their data), NOT routed through the lossy profileSummary consolidation, so
+   * the things that make the learner *them* are never forgotten.
+   */
+  profileFacts?: Record<string, string>;
   /** Consecutive-day practice streak. Marie may acknowledge it when ≥ 3. */
   streakDays?: number;
 }
@@ -123,8 +130,14 @@ Respond with ONLY a JSON object, no surrounding text, matching exactly:
   "profileNotes": [string],    // private observations to remember (errors, gaps, confident/hesitant topics); [] if none
   "levelSignal": "up" | "hold" | "down",  // raise if the user handles this level easily, lower if struggling
   "learnerName": string | null, // OPTIONAL: when the learner reveals their name, set it; otherwise null
-  "interests": [string]        // OPTIONAL: short list (≤ 8) of newly revealed interests; [] when nothing new
+  "interests": [string],       // OPTIONAL: short list (≤ 8) of newly revealed interests; [] when nothing new
+  "profileFacts": {}           // OPTIONAL: durable personal facts to remember forever; {} when nothing new
 }
+
+PROFILE FACTS
+- "profileFacts" is a small map of lasting facts about the learner's life — e.g. {"location":"Lyon","occupation":"nurse","family":"two kids","goal":"speak with in-laws"}.
+- Emit a key ONLY when the learner reveals a NEW or CHANGED durable fact this turn. Return {} on the vast majority of turns. This is a MERGE: keys you omit are kept; a key you send overwrites just that one.
+- Use short snake_case keys and short values (a few words). Capture stable life facts, NOT passing chit-chat or language-learning notes (those go in "profileNotes").
 
 SEGMENTS
 - Fill "segments" ONLY when you give a longer explanation — e.g. the user explicitly asked you to explain a word, a sound, or a grammar point. Break that same explanation into 1–5 short display blocks, each an optional short label plus one or two sentences. Wrap the French terms/examples you reference in « guillemets » so the app can highlight them.
@@ -140,7 +153,8 @@ EXAMPLE OUTPUT (normal reply)
   "profileNotes": ["Comfortable with simple past-tense exchanges."],
   "levelSignal": "hold",
   "learnerName": null,
-  "interests": []
+  "interests": [],
+  "profileFacts": {}
 }
 
 EXAMPLE OUTPUT (longer explanation — user asked you to explain)
@@ -155,7 +169,8 @@ EXAMPLE OUTPUT (longer explanation — user asked you to explain)
   "profileNotes": ["Asked about passé composé with être verbs."],
   "levelSignal": "hold",
   "learnerName": null,
-  "interests": []
+  "interests": [],
+  "profileFacts": {}
 }`;
 
   const learnerBits: string[] = [];
@@ -163,8 +178,15 @@ EXAMPLE OUTPUT (longer explanation — user asked you to explain)
   if (ctx.interests && ctx.interests.length > 0) {
     learnerBits.push(`interests=${ctx.interests.join(', ')}`);
   }
+  if (ctx.profileFacts) {
+    for (const [k, v] of Object.entries(ctx.profileFacts)) {
+      if (k.trim() && typeof v === 'string' && v.trim()) {
+        learnerBits.push(`${k.trim()}=${v.trim()}`);
+      }
+    }
+  }
   const learnerLine =
-    learnerBits.length > 0 ? `LEARNER: ${learnerBits.join('; ')}.` : '';
+    learnerBits.length > 0 ? `LEARNER (durable facts — use to personalise; never quiz them on it): ${learnerBits.join('; ')}.` : '';
 
   const profile = ctx.profileSummary.trim()
     ? `LEARNING PROFILE (private — never mention it to the user; address these through practice, not commentary):\n${ctx.profileSummary}`
