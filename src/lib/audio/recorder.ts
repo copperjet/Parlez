@@ -12,31 +12,37 @@ import type { Settings } from '@/lib/types';
 /**
  * Put the audio session into recording mode (call before listening).
  *
- * `allowsRecording: true` is required to capture the mic, but on Android it forces
- * the session into communication mode, which routes ALL playback to the earpiece
- * at low volume. That's why Marie's TTS was inaudible on most devices (a Pixel's
- * audio routing happens to mask it). So we only hold recording mode while actually
- * listening, and switch back to playback mode before Marie speaks
- * ({@link setPlaybackAudioMode}).
+ * `allowsRecording` is iOS-only; the speech recognizer owns the mic on Android.
+ * We still pin `shouldRouteThroughEarpiece: false` so that if anything plays
+ * during the listen it stays on the loudspeaker, never the earpiece.
  */
 export async function configureAudioSession(): Promise<void> {
   await setAudioModeAsync({
     allowsRecording: true,
     playsInSilentMode: true,
+    shouldRouteThroughEarpiece: false,
     // Marie keeps speaking if the app is backgrounded mid-playback (spec §9.1).
     shouldPlayInBackground: true,
   });
 }
 
 /**
- * Put the audio session into playback mode (call before Marie speaks). With
- * `allowsRecording: false` Android routes playback to the loudspeaker at media
- * volume, so Marie is actually audible. Idempotent and cheap to call per turn.
+ * Put the audio session into playback mode (call before Marie speaks).
+ *
+ * The real fix for "Marie is inaudible on Android": after a speech-recognition
+ * session the OS leaves the audio routed to the earpiece on the voice-call
+ * stream, so playback is silent or near-silent. `shouldRouteThroughEarpiece:
+ * false` forces the loudspeaker, and `interruptionMode: 'doNotMix'` requests
+ * media-stream audio focus so Marie plays at media volume. (`allowsRecording`
+ * does NOT control routing on Android — it's iOS-only — which is why toggling it
+ * alone never fixed this.) Idempotent and cheap to call per turn.
  */
 export async function setPlaybackAudioMode(): Promise<void> {
   await setAudioModeAsync({
     allowsRecording: false,
     playsInSilentMode: true,
+    shouldRouteThroughEarpiece: false,
+    interruptionMode: 'doNotMix',
     shouldPlayInBackground: true,
   });
 }

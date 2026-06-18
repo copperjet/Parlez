@@ -80,6 +80,12 @@ const POLL_MS = 150;
 /** Safety net: if `end` never arrives after a stop, finish the turn anyway. */
 const END_FALLBACK_MS = 2500;
 const FALLBACK_SPEECH: SynthesizedSpeech = { uri: null, durationMs: 2500 };
+/**
+ * Reveal Marie's text bubble no later than this after synth, even if the audio
+ * stream hasn't produced its first frame yet — so a slow/dead stream can't strand
+ * the user on thinking dots. Normally the player's onStart fires well before this.
+ */
+const REVEAL_FALLBACK_MS = 3500;
 
 /** Marie's spoken apology when the AI/network genuinely fails (spec §10.2). */
 const AI_ERROR_SPEECH =
@@ -453,11 +459,10 @@ export function useTurnEngine(online: boolean): TurnEngine {
       // and self-guarded (no-op offline / iOS / already open).
       if (onlineRef.current) prepareStreaming();
 
-      // Synthesize FIRST, while the thinking dots are still up. Committing the
-      // bubble before the audio was ready made Camille's text appear a beat ahead
-      // of her voice; holding both until synth finishes lands them together (the
-      // thinking indicator covers the wait). The only cost is the synth round-trip
-      // on perceived latency — and the bubble + voice now arrive in sync.
+      // synthesize() just builds the streaming URL — the real latency is the
+      // audio stream buffering inside player.play(). So we DON'T reveal the bubble
+      // here; we hold the thinking dots and reveal the text the instant the voice
+      // actually starts sounding (player's onStart), so text + voice land together.
       let speech: SynthesizedSpeech;
       try {
         speech = await s.service.synthesize(
@@ -469,40 +474,45 @@ export function useTurnEngine(online: boolean): TurnEngine {
         speech = FALLBACK_SPEECH;
       }
       if (!alive) return;
-      // Switch the session to playback mode so Android routes Marie to the
-      // loudspeaker (recording mode pins output to the earpiece — inaudible). Done
-      // before committing the bubble so text + audio start in the same frame.
+      // Switch to playback mode so Android routes Marie to the loudspeaker (a
+      // recognition session leaves the route on the earpiece — inaudible).
       await setPlaybackAudioMode().catch(() => {});
       if (!alive) return;
 
-      // Never render an empty Camille bubble. An empty speechText means the model
-      // returned nothing usable — most often a soft STT miss where a device
-      // transcript was present, so the earlier miss-guard didn't fire. Fall back to
-      // the gentle spoken re-prompt (and drop translation/segments, which would
-      // describe content that no longer exists).
-      const marieMsg = s.addMessage({
-        speaker: 'marie',
-        text: speechText,
-        translation: hasSpeech ? response.translation : undefined,
-        segments: hasSpeech ? response.segments : undefined,
-        corrections: hasSpeech
-          ? response.corrections.slice(0, maxCorrectionsForLevel(s.level))
-          : [],
-      });
-      s.applyLevelSignal(response.levelSignal);
-      void saveMessage(marieMsg);
-      void saveLevel(store().level);
-      void persistProfile(
-        response.profileNotes,
-        response.learnerName,
-        response.interests,
-        response.profileFacts,
-      );
+      // Reveal the bubble (commit message + flip to marie_speaking) exactly once —
+      // driven by the player's onStart, with a safety timer so a slow/dead stream
+      // can't leave the user staring at thinking dots forever.
+      let revealed = false;
+      const reveal = () => {
+        if (revealed || !alive) return;
+        revealed = true;
+        const marieMsg = s.addMessage({
+          speaker: 'marie',
+          text: speechText,
+          translation: hasSpeech ? response.translation : undefined,
+          segments: hasSpeech ? response.segments : undefined,
+          corrections: hasSpeech
+            ? response.corrections.slice(0, maxCorrectionsForLevel(s.level))
+            : [],
+        });
+        s.applyLevelSignal(response.levelSignal);
+        void saveMessage(marieMsg);
+        void saveLevel(store().level);
+        void persistProfile(
+          response.profileNotes,
+          response.learnerName,
+          response.interests,
+          response.profileFacts,
+        );
+        s.setTurnState('marie_speaking');
+      };
+      const revealFallback = setTimeout(reveal, REVEAL_FALLBACK_MS);
 
-      // Bubble on screen and audio playing in the same beat — the typewriter
-      // reveal (SpeechBubble) starts on mount, so it tracks the voice.
-      s.setTurnState('marie_speaking');
-      await player.play(speech, store().settings.speechSpeed);
+      await player.play(speech, store().settings.speechSpeed, reveal);
+      clearTimeout(revealFallback);
+      // Ensure the bubble is committed even if the line was too short to ever emit
+      // a progress frame (or onStart was missed) before play() resolved.
+      reveal();
       if (!alive) return;
       // Barge-in: the user tapped to interrupt — resume listening immediately,
       // skipping the grace pause.

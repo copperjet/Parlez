@@ -34,20 +34,33 @@ export class MariePlayer {
   /** Last observed playback position (seconds), to detect real progress. */
   private lastTime = 0;
   private settle: (() => void) | null = null;
+  /** Fired once, the moment audio actually begins (real progress or sim start). */
+  private onStart: (() => void) | null = null;
+  private started = false;
 
   /** True while Marie's audio (real or simulated) is playing. */
   get isPlaying(): boolean {
     return this.settle != null;
   }
 
-  /** Play Marie's speech; resolves when it finishes or is interrupted. */
-  play(speech: SynthesizedSpeech, speed: SpeechSpeed): Promise<void> {
+  /**
+   * Play Marie's speech; resolves when it finishes or is interrupted.
+   *
+   * `onStart` fires exactly once when audio truly begins — for a streamed line
+   * that's the first frame that actually advances (so the caller can reveal the
+   * text bubble in sync with the voice, not seconds ahead while the stream
+   * buffers); for the simulated/mock line it fires immediately.
+   */
+  play(speech: SynthesizedSpeech, speed: SpeechSpeed, onStart?: () => void): Promise<void> {
     this.stopInternal(true);
     return new Promise<void>((resolve) => {
       this.settle = resolve;
       this.lastTime = 0;
+      this.started = false;
+      this.onStart = onStart ?? null;
 
       if (!speech.uri) {
+        this.fireStart();
         this.timer = setTimeout(() => this.finish(), speech.durationMs);
         return;
       }
@@ -58,6 +71,13 @@ export class MariePlayer {
       const player = createAudioPlayer(source, { updateInterval: 150 });
       this.player = player;
       player.shouldCorrectPitch = true;
+      // Marie must come out at full media volume — a prior recording session can
+      // leave the player attenuated on some Android devices.
+      try {
+        player.volume = 1;
+      } catch {
+        // Volume may be rejected before load; the default is already 1.
+      }
       this.sub = player.addListener('playbackStatusUpdate', (status) => {
         if (status.isLoaded) {
           try {
@@ -75,6 +95,9 @@ export class MariePlayer {
         const t = typeof status.currentTime === 'number' ? status.currentTime : 0;
         if (t > this.lastTime + 0.05) {
           this.lastTime = t;
+          // First real frame of audio — the voice is now actually sounding, so
+          // this is the moment to reveal the text in sync with it.
+          this.fireStart();
           this.armStall();
         }
         if (status.didJustFinish) this.finish();
@@ -85,6 +108,15 @@ export class MariePlayer {
       this.hardTimer = setTimeout(() => this.finish(), HARD_CAP_MS);
       player.play();
     });
+  }
+
+  /** Fire the one-shot start callback (idempotent within a play() call). */
+  private fireStart(): void {
+    if (this.started) return;
+    this.started = true;
+    const cb = this.onStart;
+    this.onStart = null;
+    if (cb) cb();
   }
 
   /** (Re)start the no-progress stall watchdog. */
@@ -129,6 +161,9 @@ export class MariePlayer {
       }
       this.player = null;
     }
+    // Drop a never-fired start callback so a stalled/interrupted line can't
+    // reveal its bubble after the fact.
+    this.onStart = null;
     const settle = this.settle;
     this.settle = null;
     if (settle && resolvePending) settle();
