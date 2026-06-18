@@ -80,6 +80,7 @@ export default function Paywall() {
   const reasonResub = params.reason === 'resub';
 
   const offerings = useSubscriptionStore((s) => s.offerings);
+  const trialEligibleByProduct = useSubscriptionStore((s) => s.trialEligibleByProduct);
   const loading = useSubscriptionStore((s) => s.loading);
   const error = useSubscriptionStore((s) => s.error);
   const isPremium = useSubscriptionStore((s) => s.isPremium);
@@ -154,7 +155,16 @@ export default function Paywall() {
   // guarantee. The catalog `introPrice` still reads non-null for them, so we must
   // suppress trial + guarantee copy explicitly on the resub path or the UI
   // promises offers they can't actually get.
-  const trial = reasonResub ? null : freeTrial(selectedPkg);
+  //
+  // Beyond resub, a reinstall-after-trial user reaches the free/default paywall
+  // with the same dead trial in the catalog. RevenueCat's per-user eligibility
+  // (trialEligibleByProduct) is `false` only when the store is confident it won't
+  // grant the trial, so we hide trial copy then too. Missing/true → show.
+  const catalogTrial = reasonResub ? null : freeTrial(selectedPkg);
+  const trial =
+    catalogTrial && selectedPkg && trialEligibleByProduct[selectedPkg.product.identifier] !== false
+      ? catalogTrial
+      : null;
   const showGuarantee = !reasonResub;
 
   const onBuy = async () => {

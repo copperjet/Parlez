@@ -12,6 +12,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import Purchases, {
+  INTRO_ELIGIBILITY_STATUS,
   type CustomerInfo,
   type PurchasesEntitlementInfo,
   type PurchasesOffering,
@@ -63,6 +64,16 @@ interface SubscriptionStore {
   tier: Tier;
   entitlement: PurchasesEntitlementInfo | null;
   offerings: PurchasesOffering | null;
+  /**
+   * Per-product intro-trial eligibility for THIS user, as computed by RevenueCat
+   * (which reflects the store's once-per-account rule). Keyed by product
+   * identifier. A value of `false` means RC is confident the user is INELIGIBLE
+   * — the store will not grant the trial, so the paywall must not advertise one.
+   * Missing key or `true` means show the catalog trial: a genuine first-timer, or
+   * an UNKNOWN result we don't punish (hiding on UNKNOWN would kill first-timer
+   * conversion on Android, where eligibility often can't be resolved client-side).
+   */
+  trialEligibleByProduct: Record<string, boolean>;
   loading: boolean;
   /** True once we've hydrated from cache OR refresh() has returned. Routing
    * waits for this to avoid a flash of paywall for paying users. */
@@ -91,6 +102,8 @@ interface SubscriptionStore {
 
   hydrateFromCache: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Recompute per-user intro-trial eligibility for the offering's subscriptions. */
+  refreshTrialEligibility: (offering: PurchasesOffering | null) => Promise<void>;
   purchase: (pkg: PurchasesPackage) => Promise<boolean>;
   restore: () => Promise<boolean>;
   logOutAndReset: () => Promise<void>;
@@ -215,6 +228,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   tier: null,
   entitlement: null,
   offerings: null,
+  trialEligibleByProduct: {},
   loading: false,
   ready: false,
   error: null,
@@ -263,6 +277,9 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
         Purchases.getOfferings(),
       ]);
       set({ offerings: offers.current ?? null });
+      // Fire-and-forget: eligibility never gates routing, only paywall copy, so
+      // it must not block the entitlement resolution below.
+      void get().refreshTrialEligibility(offers.current ?? null);
 
       // Self-heal: if the cache said premium but this fetch reports nothing, do
       // NOT downgrade on faith — a flapping app-user-id or a slow store handoff
@@ -307,6 +324,33 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
         ready: true,
         error: e instanceof Error ? e.message : 'fetch_failed',
       });
+    }
+  },
+
+  refreshTrialEligibility: async (offering) => {
+    if (!isConfigured() || !offering) return;
+    // Only auto-renewing subscriptions can carry an intro trial — lifetime can't,
+    // and the catalog already has no introPrice for it.
+    const ids = offering.availablePackages
+      .filter((p) => p.packageType === 'MONTHLY' || p.packageType === 'ANNUAL')
+      .map((p) => p.product.identifier);
+    if (ids.length === 0) return;
+    try {
+      const result = await Purchases.checkTrialOrIntroductoryPriceEligibility(ids);
+      const map: Record<string, boolean> = {};
+      for (const [id, e] of Object.entries(result)) {
+        // Suppress trial copy ONLY on an explicit INELIGIBLE (RC is confident the
+        // store won't grant it — the once-per-account churned/reinstall case).
+        // ELIGIBLE, UNKNOWN and NO_INTRO_OFFER all leave trial copy to the catalog
+        // check, so a genuine first-timer is never denied the offer over an
+        // unresolvable Android eligibility lookup.
+        map[id] =
+          e.status !== INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_INELIGIBLE;
+      }
+      set({ trialEligibleByProduct: map });
+    } catch {
+      // Best-effort: leave the map as-is. A missing entry shows the catalog trial,
+      // the same safe-for-first-timers default as UNKNOWN.
     }
   },
 
@@ -372,6 +416,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       wasEverPremium: false,
       tier: null,
       entitlement: null,
+      trialEligibleByProduct: {},
       lastFetchedAt: null,
       usageTodaySeconds: 0,
       usageDay: todayLocal(),
