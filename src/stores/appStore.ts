@@ -94,6 +94,13 @@ interface AppStore {
   lastSessionDate: string | null;
 
   /**
+   * Set to the streak length when today's 10-minute goal is first met, to trigger
+   * the one-shot celebration overlay; null while there's nothing to celebrate.
+   * Transient (never persisted) — the once-per-day guard lives in kv.
+   */
+  pendingStreakCelebration: number | null;
+
+  /**
    * First-launch date (YYYY-MM-DD local) — anchors the money-back guarantee
    * window. Set once on the first hydrate that finds none; never reset by a
    * memory clear.
@@ -157,6 +164,7 @@ interface AppStore {
   /** Replace the durable personal-facts map (merge logic lives in the turn loop). */
   setProfileFacts: (facts: Record<string, string>) => void;
   setStreak: (count: number, date: string | null) => void;
+  setPendingStreakCelebration: (streak: number | null) => void;
   setTurnsSinceConsolidation: (count: number) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   /** "Clear session history" — resets Marie's memory of the user (spec §4.5). */
@@ -183,6 +191,7 @@ export const useAppStore = create<AppStore>((set) => ({
   profileFacts: {},
   streakCount: 0,
   lastSessionDate: null,
+  pendingStreakCelebration: null,
   firstLaunchDate: null,
   isFirstTimeUser: true,
   turnsSinceConsolidation: 0,
@@ -271,6 +280,9 @@ export const useAppStore = create<AppStore>((set) => ({
 
   setStreak: (streakCount, lastSessionDate) =>
     set({ streakCount, lastSessionDate }),
+
+  setPendingStreakCelebration: (pendingStreakCelebration) =>
+    set({ pendingStreakCelebration }),
 
   setTurnsSinceConsolidation: (turnsSinceConsolidation) =>
     set({ turnsSinceConsolidation }),

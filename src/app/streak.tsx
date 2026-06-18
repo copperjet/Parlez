@@ -51,7 +51,7 @@ function longestRun(completed: Set<string>): number {
 /** A pure motivational line keyed to the streak length. */
 function blurbFor(streak: number): string {
   if (streak <= 0) return 'Practice 10 minutes today to light your first flame.';
-  if (streak < 3) return 'A habit is forming — keep it lit.';
+  if (streak < 3) return 'A habit is forming. Keep it lit.';
   if (streak < 7) return 'You’re building real momentum.';
   if (streak < 14) return 'A whole week of French. Incredible.';
   if (streak < 30) return 'Unstoppable. This is how fluency is built.';
@@ -88,11 +88,34 @@ export default function Streak() {
   // streak so a short ledger (e.g. just after a reinstall, before it rebuilds)
   // can't under-report a still-alive synced streak. Matches refreshStreakFromHistory
   // exactly. Falls back to the store value until the ledger has loaded (or on web).
-  const streakNow =
+  const reconciled =
     activity.length > 0
-      ? reconcileStreak(completed, today, streak, lastSessionDate).streak
-      : streak;
-  const record = useMemo(() => Math.max(streakNow, longestRun(completed)), [completed, streakNow]);
+      ? reconcileStreak(completed, today, streak, lastSessionDate)
+      : { streak, lastDate: lastSessionDate };
+  const streakNow = reconciled.streak;
+
+  // What the calendar paints. The raw ledger can be SHORTER than the real streak
+  // (e.g. just after a reinstall, where only the synced scalar survives and the
+  // daily_activity table rebuilds one day at a time) — which left past streak days
+  // blank even though the hero count said "5 days in a row". Backfill the implied
+  // run: streakNow consecutive days ending at the reconciled last day, unioned with
+  // the ledger. Display-only inference, mirrors what reconcileStreak already trusts.
+  const displayCompleted = useMemo(() => {
+    const set = new Set(completed);
+    if (streakNow > 0 && reconciled.lastDate) {
+      let d = reconciled.lastDate;
+      for (let i = 0; i < streakNow; i += 1) {
+        set.add(d);
+        d = addDays(d, -1);
+      }
+    }
+    return set;
+  }, [completed, streakNow, reconciled.lastDate]);
+
+  const record = useMemo(
+    () => Math.max(streakNow, longestRun(displayCompleted)),
+    [displayCompleted, streakNow],
+  );
 
   const tier = flameTierFor(Math.max(1, streakNow));
   const next = nextFlameTier(streakNow);
@@ -127,10 +150,10 @@ export default function Streak() {
   const onRefund = async () => {
     const appUserId = await getCallerId();
     const product = entitlement?.productIdentifier ?? planTier ?? 'unknown';
-    const subject = 'Parlez money-back guarantee — refund request';
+    const subject = 'Parlez money-back guarantee: refund request';
     const body =
       `I’ve completed the 20-day guarantee and would like to request a full refund.\n\n` +
-      `— Please keep the lines below; they help us find your purchase —\n` +
+      `(Please keep the lines below; they help us find your purchase.)\n` +
       `Account: ${email ?? 'anonymous (not signed in)'}\n` +
       `App user ID: ${appUserId ?? 'unknown'}\n` +
       `Product: ${product}\n` +
@@ -289,7 +312,7 @@ export default function Streak() {
             {cal.cells.map((cell, i) => {
               if (!cell) return <View key={`e${i}`} style={styles.cell} />;
               const isToday = cell.iso === today;
-              const done = completed.has(cell.iso);
+              const done = displayCompleted.has(cell.iso);
               const future = cell.iso > today;
               return (
                 <View key={cell.iso} style={styles.cell}>
@@ -347,8 +370,8 @@ export default function Streak() {
             </View>
             <Text style={[styles.guaranteeBody, { color: colors.textSecondary }]}>
               {guarantee.eligible
-                ? 'You practised 20 days in a row. If Parlez isn’t for you, you can request a full refund — no questions.'
-                : `Practise 10 minutes a day for ${guarantee.needed} days in a row. That’s our promise this works — keep your streak and you’re covered.`}
+                ? 'You practised 20 days in a row. If Parlez isn’t for you, you can request a full refund, no questions.'
+                : `Practise 10 minutes a day for ${guarantee.needed} days in a row. That’s our promise this works: keep your streak and you’re covered.`}
             </Text>
 
             <View style={[styles.barTrack, { backgroundColor: colors.surfaceMuted }]}>

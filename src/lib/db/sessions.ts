@@ -339,6 +339,29 @@ export function saveSignInNudgeDismissed(milestone: number): Promise<void> {
   return saveKv({ signInNudgeDismissed: String(Math.max(0, Math.floor(milestone))) });
 }
 
+/**
+ * The local day (YYYY-MM-DD) we last showed the "streak day complete" celebration,
+ * so it fires once per day — not again on every relaunch after the goal is met.
+ */
+export async function loadStreakCelebratedDate(): Promise<string | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const row = await db.getFirstAsync<{ value: string }>(
+      'SELECT value FROM kv WHERE key = ?',
+      'streakCelebratedDate',
+    );
+    const v = (row?.value ?? '').trim();
+    return v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveStreakCelebratedDate(date: string): Promise<void> {
+  return saveKv({ streakCelebratedDate: date });
+}
+
 /** Persist the consolidation counter so it survives a relaunch. */
 export function saveTurnsSinceConsolidation(count: number): Promise<void> {
   return saveKv({
@@ -357,6 +380,7 @@ export function clearStreak(): Promise<void> {
     streakCount: '0',
     lastSessionDate: '',
     turnsSinceConsolidation: '0',
+    streakCelebratedDate: '',
   });
 }
 

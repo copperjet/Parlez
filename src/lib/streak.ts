@@ -15,7 +15,13 @@ import {
   GUARANTEE_DAYS,
   GUARANTEE_WINDOW_DAYS,
 } from '@/lib/constants';
-import { addDailyActivity, loadDailyActivity, saveStreak } from '@/lib/db/sessions';
+import {
+  addDailyActivity,
+  loadDailyActivity,
+  loadStreakCelebratedDate,
+  saveStreak,
+  saveStreakCelebratedDate,
+} from '@/lib/db/sessions';
 import { useAppStore } from '@/stores/appStore';
 import type { ImageSourcePropType } from 'react-native';
 
@@ -303,6 +309,10 @@ export async function creditFreeTasteStreakDay(): Promise<void> {
     if (todaySeconds < DAILY_GOAL_SECONDS) {
       await addDailyActivity(today, DAILY_GOAL_SECONDS - todaySeconds);
     }
+    // The free-taste Day 1 is celebrated by the paywall itself ("your first
+    // flame"), so suppress the in-app overlay for today — mark it celebrated
+    // before refreshing so they don't stack.
+    await saveStreakCelebratedDate(today);
     await refreshStreakFromHistory();
   } catch {
     // Best-effort — streak is UX polish, never blocks the paywall flow.
@@ -329,6 +339,17 @@ export async function refreshStreakFromHistory(): Promise<void> {
       s.streakCount,
       s.lastSessionDate,
     );
+
+    // Today's goal just met → fire the once-a-day celebration. Checked before the
+    // unchanged-streak early return below, and gated on a persisted per-day flag so
+    // it shows the moment practice crosses 10 minutes — not again on every relaunch.
+    if (completed.has(today)) {
+      const celebrated = await loadStreakCelebratedDate();
+      if (celebrated !== today) {
+        await saveStreakCelebratedDate(today);
+        useAppStore.getState().setPendingStreakCelebration(Math.max(1, streak));
+      }
+    }
 
     if (s.streakCount === streak && (s.lastSessionDate ?? null) === (lastDate ?? null)) {
       return;

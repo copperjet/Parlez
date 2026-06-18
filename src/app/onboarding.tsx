@@ -134,7 +134,7 @@ export default function Onboarding() {
             </Text>
             {denied ? (
               <Text style={[styles.denied, { color: colors.textSecondary }]}>
-                Microphone access is off. {personaName} needs it to hear you — you can
+                Microphone access is off. {personaName} needs it to hear you. You can
                 enable it in Settings.
               </Text>
             ) : null}

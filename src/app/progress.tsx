@@ -60,7 +60,7 @@ export default function Progress() {
 
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={[styles.lead, { color: colors.textSecondary }]}>
-          A quiet look at what you've practised. Nothing here is a grade — just
+          A quiet look at what you've practised. Nothing here is a grade, just
           gentle reminders of what to keep working on.
         </Text>
 
@@ -76,7 +76,7 @@ export default function Progress() {
           </View>
         ) : (
           <Text style={[styles.empty, { color: colors.textFaint }]}>
-            Keep chatting — patterns will appear here as you talk more.
+            Keep chatting, and patterns will appear here as you talk more.
           </Text>
         )}
 

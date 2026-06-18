@@ -42,7 +42,7 @@ const BURNING_FLAME = require('../../assets/images/burning flame.gif');
  * Lifetime only — a 30-day guarantee on a ~30-day monthly term is a free month.
  */
 const GUARANTEE =
-  '30-day money-back guarantee. Do 10 minutes a day. If you can’t hold a basic conversation, we refund everything — no questions.';
+  '30-day money-back guarantee. Do 10 minutes a day. If you can’t hold a basic conversation, we refund everything, no questions.';
 
 function classify(pkg: PurchasesPackage): TierId | null {
   const type = pkg.packageType;
@@ -75,6 +75,9 @@ export default function Paywall() {
   const params = useLocalSearchParams<{ reason?: string }>();
   const reasonCap = params.reason === 'cap';
   const reasonFree = params.reason === 'free';
+  // A churned ex-subscriber. NOT a fresh free-taste user — they get resubscribe
+  // copy, never the celebratory "your first session / first flame" framing.
+  const reasonResub = params.reason === 'resub';
 
   const offerings = useSubscriptionStore((s) => s.offerings);
   const loading = useSubscriptionStore((s) => s.loading);
@@ -124,7 +127,7 @@ export default function Paywall() {
   // Soft reasons (free-taste exhausted, daily cap) are dismissible back to the
   // now read-only conversation — the server still gates actual chat, so there's
   // nothing to "slip past". A hard open (no reason) still swallows Android back.
-  const dismissible = reasonFree || reasonCap;
+  const dismissible = reasonFree || reasonCap || reasonResub;
   const onDismiss = useCallback(() => {
     // Reached via push (upgrade bar / celebratory) or replace (turn-engine 403).
     // Prefer popping back to the conversation beneath; fall back to a replace.
@@ -224,24 +227,28 @@ export default function Paywall() {
             </View>
             <Text style={[styles.celebrateLabel, { color: colors.accent }]}>
               {streakCount <= 1
-                ? '🔥 Day 1 — your first flame'
-                : `🔥 Day ${streakCount} — keep it burning`}
+                ? '🔥 Day 1 · your first flame'
+                : `🔥 Day ${streakCount} · keep it burning`}
             </Text>
           </View>
         ) : null}
         <Text style={[styles.title, { color: colors.text }]}>
           {reasonFree
             ? 'You just spoke French. Keep going.'
-            : reasonCap
-              ? 'Keep going. You will speak French.'
-              : 'You will speak French. That’s the guarantee.'}
+            : reasonResub
+              ? 'Welcome back. Pick up where you left off.'
+              : reasonCap
+                ? 'Keep going. You will speak French.'
+                : 'You will speak French. That’s the guarantee.'}
         </Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           {reasonFree
-            ? 'That was your first session with Camille — and your first streak day. Keep your flame lit and your French growing, with the same guarantee: speak, or your money back.'
-            : reasonCap
-              ? 'You’ve hit today’s limit. Annual gives you 3× the daily practice — and the same guarantee: speak, or your money back.'
-              : 'Every French app taught you words. Parlez makes you speak them — no flashcards, no grammar drills.'}
+            ? 'That was your first session with Camille, and your first streak day. Keep your flame lit and your French growing, with the same guarantee: speak, or your money back.'
+            : reasonResub
+              ? 'Your subscription has ended. Resubscribe to keep speaking French, with the same guarantee: speak, or your money back.'
+              : reasonCap
+                ? 'You’ve hit today’s limit. Annual gives you 3× the daily practice, and the same guarantee: speak, or your money back.'
+                : 'Every French app taught you words. Parlez makes you speak them. No flashcards, no grammar drills.'}
         </Text>
 
         <View style={styles.tiers}>
@@ -301,8 +308,8 @@ export default function Paywall() {
               {trial
                 ? `Start ${trial.length} free trial`
                 : selected === 'lifetime'
-                  ? 'Speak French — one payment'
-                  : `Speak French — ${selectedPkg?.product.priceString ?? ''}${
+                  ? 'Speak French · one payment'
+                  : `Speak French · ${selectedPkg?.product.priceString ?? ''}${
                       selected === 'annual' ? '/yr' : '/mo'
                     }`}
             </Text>

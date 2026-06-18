@@ -90,7 +90,7 @@ export default function Privacy() {
 
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={[styles.lead, { color: colors.textSecondary }]}>
-          Parlez is built around one idea — getting you speaking French — and
+          Parlez is built around one idea, getting you speaking French, and
           collects only what serves that.
         </Text>
 

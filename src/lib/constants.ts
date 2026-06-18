@@ -15,7 +15,7 @@ export const DELETE_ACCOUNT_URL = 'https://www.codarti.com/parlez/delete-account
 export const SUPPORT_EMAIL = 'support@codarti.com';
 
 /** Notice shown when the OS mic permission is off — tapping it opens Settings. */
-export const MIC_OFF_NOTICE = 'Microphone access is off — tap to open Settings.';
+export const MIC_OFF_NOTICE = 'Microphone access is off. Tap to open Settings.';
 
 /** Splash screen max duration before onboarding (spec §3.1 step 1). */
 export const SPLASH_MS = 1500;

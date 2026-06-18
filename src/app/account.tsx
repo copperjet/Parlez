@@ -176,7 +176,7 @@ export default function Account() {
         // {{ .Token }}). Collect it next; verifyOtp signs the user straight in.
         setOtpCode('');
         setAuthMode('confirmVerify');
-        setNotice('Confirmation code sent — check your email.');
+        setNotice('Confirmation code sent. Check your email.');
         return;
       }
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -207,7 +207,7 @@ export default function Account() {
       const { error } = await supabase.auth.resetPasswordForEmail(addr);
       if (error) { setNotice(error.message); return; }
       setAuthMode('resetVerify');
-      setNotice('Code sent — check your email.');
+      setNotice('Code sent. Check your email.');
     } catch {
       setNotice('Something went wrong. Try again.');
     } finally {
@@ -267,7 +267,7 @@ export default function Account() {
         await reload();
       }
       switchMode('signIn');
-      setNotice('Email confirmed — you’re signed in.');
+      setNotice('Email confirmed. You’re signed in.');
     } catch {
       setNotice('Something went wrong. Try again.');
     } finally {

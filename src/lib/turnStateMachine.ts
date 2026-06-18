@@ -18,7 +18,12 @@ import { Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 import { MariePlayer } from '@/lib/audio/player';
-import { configureAudioSession, isAudibleVoice, volumeToAmplitude } from '@/lib/audio/recorder';
+import {
+  configureAudioSession,
+  isAudibleVoice,
+  setPlaybackAudioMode,
+  volumeToAmplitude,
+} from '@/lib/audio/recorder';
 import {
   abortRecognition,
   getRecognitionPermissions,
@@ -187,9 +192,9 @@ function micFailureNotice(code: string | null, online: boolean): string {
     return MIC_OFF_NOTICE;
   }
   if (code === 'network' && !online) {
-    return 'You’re offline — voice needs a connection. Tap to retry.';
+    return 'You’re offline. Voice needs a connection. Tap to retry.';
   }
-  return 'Couldn’t hear the mic — tap to try again.';
+  return 'Couldn’t hear the mic. Tap to try again.';
 }
 
 export function useTurnEngine(online: boolean): TurnEngine {
@@ -439,10 +444,42 @@ export function useTurnEngine(online: boolean): TurnEngine {
       const hasSpeech = response.speechText.trim().length > 0;
       const speechText = hasSpeech ? response.speechText : STT_MISS_SPEECH;
 
-      // Show the reply the moment it arrives — don't make the user wait on TTS
-      // synthesis before they can read it. We commit the bubble and flip to
-      // 'marie_speaking' first, then synthesize and play the audio under it. This
-      // shaves the synth round-trip off the *perceived* response time.
+      interruptedDuringSpeak = false;
+
+      // Pre-warm the streaming socket now, while we synthesize. Minting the token
+      // + opening the WebSocket takes ~1–3s; doing it here (in parallel with TTS
+      // synth + playback) means the mic starts capturing instantly when the user's
+      // turn begins, instead of stalling at the start of the listen. Fire-and-forget
+      // and self-guarded (no-op offline / iOS / already open).
+      if (onlineRef.current) prepareStreaming();
+
+      // Synthesize FIRST, while the thinking dots are still up. Committing the
+      // bubble before the audio was ready made Camille's text appear a beat ahead
+      // of her voice; holding both until synth finishes lands them together (the
+      // thinking indicator covers the wait). The only cost is the synth round-trip
+      // on perceived latency — and the bubble + voice now arrive in sync.
+      let speech: SynthesizedSpeech;
+      try {
+        speech = await s.service.synthesize(
+          speechText,
+          s.settings.voice,
+          s.settings.speechSpeed,
+        );
+      } catch {
+        speech = FALLBACK_SPEECH;
+      }
+      if (!alive) return;
+      // Switch the session to playback mode so Android routes Marie to the
+      // loudspeaker (recording mode pins output to the earpiece — inaudible). Done
+      // before committing the bubble so text + audio start in the same frame.
+      await setPlaybackAudioMode().catch(() => {});
+      if (!alive) return;
+
+      // Never render an empty Camille bubble. An empty speechText means the model
+      // returned nothing usable — most often a soft STT miss where a device
+      // transcript was present, so the earlier miss-guard didn't fire. Fall back to
+      // the gentle spoken re-prompt (and drop translation/segments, which would
+      // describe content that no longer exists).
       const marieMsg = s.addMessage({
         speaker: 'marie',
         text: speechText,
@@ -462,35 +499,9 @@ export function useTurnEngine(online: boolean): TurnEngine {
         response.profileFacts,
       );
 
+      // Bubble on screen and audio playing in the same beat — the typewriter
+      // reveal (SpeechBubble) starts on mount, so it tracks the voice.
       s.setTurnState('marie_speaking');
-      interruptedDuringSpeak = false;
-
-      // Pre-warm the streaming socket now, while Camille speaks. Minting the token
-      // + opening the WebSocket takes ~1–3s; doing it here (in parallel with TTS
-      // synth + playback) means the mic starts capturing instantly when the user's
-      // turn begins, instead of stalling at the start of the listen. Fire-and-forget
-      // and self-guarded (no-op offline / iOS / already open).
-      if (onlineRef.current) prepareStreaming();
-
-      let speech: SynthesizedSpeech;
-      try {
-        speech = await s.service.synthesize(
-          speechText,
-          s.settings.voice,
-          s.settings.speechSpeed,
-        );
-      } catch {
-        speech = FALLBACK_SPEECH;
-      }
-      if (!alive) return;
-      // The user can barge in while the audio is still synthesizing (the bubble is
-      // already on screen and the mic is live in 'marie_speaking'). If they did,
-      // skip playback and start listening instead of speaking over them.
-      if (interruptedDuringSpeak) {
-        interruptedDuringSpeak = false;
-        void startListening();
-        return;
-      }
       await player.play(speech, store().settings.speechSpeed);
       if (!alive) return;
       // Barge-in: the user tapped to interrupt — resume listening immediately,
@@ -662,7 +673,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         store().setErrorNotice(
           onlineRef.current
             ? `${voiceName(store().settings.voice)} couldn’t respond just now. Please try again in a moment.`
-            : 'You’re offline — reconnect and try again.',
+            : 'You’re offline. Reconnect and try again.',
         );
         // Keep the user's echoed turn on screen (don't drop their words) while
         // Camille apologises.
@@ -680,7 +691,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
       // STT miss: audio was sent but nothing was transcribed — Marie says so too (spec §10.2).
       // (Only reachable with no device transcript, so there's no optimistic echo to settle.)
       if (input.audioUri && !input.text && !response.transcript) {
-        store().setErrorNotice('I didn’t catch that — try again?');
+        store().setErrorNotice('I didn’t catch that. Try again?');
         await speak({
           transcript: '',
           speechText: STT_MISS_SPEECH,
@@ -947,6 +958,10 @@ export function useTurnEngine(online: boolean): TurnEngine {
 
     const startListening = async () => {
       if (!alive) return;
+      // Re-arm recording mode (speak() switched the session to playback so Marie
+      // came out the loudspeaker). The mic can't capture in playback mode.
+      await configureAudioSession().catch(() => {});
+      if (!alive) return;
       store().setTurnState('listening');
       store().setLiveTranscript('');
       speechStartAt = null;
@@ -1101,7 +1116,7 @@ export function useTurnEngine(online: boolean): TurnEngine {
         store().setErrorNotice(
           onlineRef.current
             ? `${voiceName(store().settings.voice)} couldn’t start just now. Tap the mic to try again.`
-            : 'You’re offline — reconnect and tap the mic to start.',
+            : 'You’re offline. Reconnect and tap the mic to start.',
         );
         store().setTurnState('idle');
         return;
@@ -1254,6 +1269,8 @@ export function useTurnEngine(online: boolean): TurnEngine {
         } catch {
           return;
         }
+        if (!alive) return;
+        await setPlaybackAudioMode().catch(() => {});
         if (!alive) return;
         await player.play(speech, store().settings.speechSpeed);
       })();

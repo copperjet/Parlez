@@ -25,6 +25,7 @@ import {
   MicButton,
   SignInNudge,
   SpeechBubble,
+  StreakCelebration,
   ThinkingIndicator,
   Waveform,
   type WaveformMode,
@@ -183,11 +184,28 @@ function ConversationSession() {
     const MAX_DELTA_MS = 60_000; // cap one interval (missed timer / brief blur)
     const IDLE_CUTOFF_MS = 90_000; // pause after this long with no turn activity
     let lastTickAt = Date.now();
-    let lastActiveAt = Date.now();
+    // 0 until the user actually takes a turn. Merely opening the app and listening
+    // to Marie's greeting must NOT bank streak time — that was crediting a streak
+    // day for opening the app without practising. A new *user* message (spoken or
+    // typed) is the only true "practised" signal: it never fires for Marie's
+    // greeting, and it (re)starts the activity clock so the idle gate below keeps
+    // banking across the turns that follow until the user goes quiet.
+    let lastActiveAt = 0;
+    let lastUserMsgId: string | null = null;
 
-    // Any turn-state change means the user is engaged — refresh the activity clock.
     const unsub = useAppStore.subscribe((state, prev) => {
-      if (state.turnState !== prev.turnState) lastActiveAt = Date.now();
+      if (state.messages === prev.messages) return;
+      let lastUser: Message | null = null;
+      for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+        if (state.messages[i].speaker === 'user') {
+          lastUser = state.messages[i];
+          break;
+        }
+      }
+      if (lastUser && lastUser.id !== lastUserMsgId) {
+        lastUserMsgId = lastUser.id;
+        lastActiveAt = Date.now();
+      }
     });
 
     const tick = () => {
@@ -225,9 +243,9 @@ function ConversationSession() {
   const banner =
     errorNotice ??
     (sttUnavailable
-      ? `Voice needs the full Parlez app — type to chat with ${personaName} here.`
+      ? `Voice needs the full Parlez app. Type to chat with ${personaName} here.`
       : null) ??
-    (!online ? 'You’re offline — full conversation needs internet.' : null);
+    (!online ? 'You’re offline. Full conversation needs internet.' : null);
   const bannerIsError = errorNotice != null;
   // The mic-permission notice is actionable: tapping it jumps straight to the OS
   // app-settings page so the user can grant access without hunting for it.
@@ -370,7 +388,7 @@ function CapSheet() {
       : `You've reached today's ${capMinutes} minute limit.`;
   const sub =
     tier === 'monthly'
-      ? 'Annual unlocks 90 minutes a day — three times the practice for less than half the monthly rate.'
+      ? 'Annual unlocks 90 minutes a day: three times the practice for less than half the monthly rate.'
       : 'Come back tomorrow, or upgrade to Lifetime for unlimited practice.';
   const ctaLabel = tier === 'monthly' ? 'Upgrade to Annual' : 'See Lifetime';
 
@@ -473,7 +491,13 @@ function LockedConversation() {
             : `That was your free session with ${personaName}.`}
         </Text>
         <Pressable
-          onPress={() => router.push('/paywall?reason=free' as never)}
+          onPress={() =>
+            router.push(
+              (wasEverPremium
+                ? '/paywall?reason=resub'
+                : '/paywall?reason=free') as never,
+            )
+          }
           accessibilityRole="button"
           accessibilityLabel="Upgrade to keep speaking"
           style={[styles.upgradeBar, { backgroundColor: colors.accent }]}>
@@ -511,24 +535,40 @@ export default function Conversation() {
     if (canChat) {
       wasChatting.current = true;
     } else if (wasChatting.current) {
-      // Just crossed the free-taste line in-session — celebrate, then offer.
+      // Just lost access in-session. Two distinct cases:
       wasChatting.current = false;
-      // The free taste IS the first 10-min streak day. Light it here — the single
-      // chokepoint every exhaustion path funnels through (server 403 or the local
-      // meter crossing) — so the streak screen and the paywall's "Day 1" agree.
-      // The local ledger can trail the server, which also counts greeting +
-      // silence turns the client never banks; this tops today up to the goal.
+      if (useSubscriptionStore.getState().wasEverPremium) {
+        // A churned subscriber whose entitlement lapsed mid-session. NOT a first
+        // free taste — never light a "Day 1" streak or show the celebratory
+        // "first flame" copy. Offer resubscribe instead.
+        router.push('/paywall?reason=resub' as never);
+        return;
+      }
+      // A free-taste user crossing the line — celebrate, then offer. The free
+      // taste IS the first 10-min streak day. Light it here — the single chokepoint
+      // every exhaustion path funnels through (server 403 or the local meter
+      // crossing) — so the streak screen and the paywall's "Day 1" agree. The local
+      // ledger can trail the server, which also counts greeting + silence turns the
+      // client never banks; this tops today up to the goal.
       void creditFreeTasteStreakDay();
       router.push('/paywall?reason=free' as never);
     }
   }, [canChat, ready, router]);
 
   if (!ready) return null;
-  if (!canChat) return <LockedConversation />;
   return (
     <>
-      <ConversationSession key={sessionEpoch} />
-      <CapSheet />
+      {canChat ? (
+        <>
+          <ConversationSession key={sessionEpoch} />
+          <CapSheet />
+        </>
+      ) : (
+        <LockedConversation />
+      )}
+      {/* Overlays every state so the "streak day complete" moment can land while
+          the user is still practising. */}
+      <StreakCelebration />
     </>
   );
 }

@@ -77,7 +77,7 @@ export function SignInNudge() {
         style={styles.body}>
         <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
         <Text style={[styles.text, { color: colors.accent }]} numberOfLines={2}>
-          {`Back up your ${milestone}-day streak — sign in so you never lose your progress.`}
+          {`Back up your ${milestone}-day streak. Sign in so you never lose your progress.`}
         </Text>
       </Pressable>
       <Pressable
