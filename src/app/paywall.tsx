@@ -149,7 +149,13 @@ export default function Paywall() {
   );
 
   const selectedPkg = tiers[selected] ?? null;
-  const trial = freeTrial(selectedPkg);
+  // Returning subscribers are ineligible for the Play intro trial (granted once
+  // per Google account) AND fall outside the first-timer speak-or-refund
+  // guarantee. The catalog `introPrice` still reads non-null for them, so we must
+  // suppress trial + guarantee copy explicitly on the resub path or the UI
+  // promises offers they can't actually get.
+  const trial = reasonResub ? null : freeTrial(selectedPkg);
+  const showGuarantee = !reasonResub;
 
   const onBuy = async () => {
     if (!selectedPkg) return;
@@ -245,7 +251,7 @@ export default function Paywall() {
           {reasonFree
             ? 'That was your first session with Camille, and your first streak day. Keep your flame lit and your French growing, with the same guarantee: speak, or your money back.'
             : reasonResub
-              ? 'Your subscription has ended. Resubscribe to keep speaking French, with the same guarantee: speak, or your money back.'
+              ? 'Your subscription has ended. Resubscribe to pick up your conversations with Camille right where you left off.'
               : reasonCap
                 ? 'You’ve hit today’s limit. Annual gives you 3× the daily practice, and the same guarantee: speak, or your money back.'
                 : 'Every French app taught you words. Parlez makes you speak them. No flashcards, no grammar drills.'}
@@ -257,7 +263,7 @@ export default function Paywall() {
               tier="monthly"
               pkg={tiers.monthly}
               label="Monthly"
-              caption="Start with a free trial"
+              caption={reasonResub ? 'Cancel anytime' : 'Start with a free trial'}
               selected={selected === 'monthly'}
               onPress={() => setSelected('monthly')}
             />
@@ -278,7 +284,11 @@ export default function Paywall() {
               tier="lifetime"
               pkg={tiers.lifetime}
               label="Lifetime"
-              caption="One payment. Yours forever. 30-day money-back guarantee."
+              caption={
+                reasonResub
+                  ? 'One payment. Yours forever.'
+                  : 'One payment. Yours forever. 30-day money-back guarantee.'
+              }
               selected={selected === 'lifetime'}
               onPress={() => setSelected('lifetime')}
             />
@@ -320,12 +330,14 @@ export default function Paywall() {
           {trial
             ? `${trial.phrase} free, then ${selectedPkg?.product.priceString ?? ''}${
                 selected === 'annual' ? ' billed yearly' : ' billed monthly'
-              }, cancel anytime.${selected === 'monthly' ? '' : ` ${GUARANTEE}`}`
+              }, cancel anytime.${selected === 'monthly' || !showGuarantee ? '' : ` ${GUARANTEE}`}`
             : selected === 'lifetime'
-              ? `One payment. No subscription, no renewal. ${GUARANTEE}`
+              ? `One payment. No subscription, no renewal.${showGuarantee ? ` ${GUARANTEE}` : ''}`
               : selected === 'monthly'
                 ? 'Billed monthly, cancel anytime.'
-                : GUARANTEE}
+                : showGuarantee
+                  ? GUARANTEE
+                  : 'Billed yearly, cancel anytime.'}
         </Text>
 
         <Pressable onPress={() => refresh()} hitSlop={10} style={styles.refresh}>
