@@ -12,8 +12,16 @@
 import { corsHeaders } from '../_shared/cors.ts';
 import { resolveCaller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
-import { loadEntitlement } from '../_shared/caps.ts';
+import { loadEntitlement, loadLifetimeElapsedMs } from '../_shared/caps.ts';
 import { estimateTtsMicrocents } from '../_shared/pricing.ts';
+
+/**
+ * Free-taste allowance — MUST match FREE_TASTE_MS in `turn/index.ts` (and
+ * FREE_TASTE_SECONDS in the subscription store). A non-entitled caller may hear
+ * Camille until their lifetime conversation time crosses this, exactly as `turn`
+ * lets them keep talking. Without the parity, free users got text but no voice.
+ */
+const FREE_TASTE_MS = 10 * 60 * 1000;
 
 /** Map the persona's voice ids to ElevenLabs voice ids (override via env). */
 function voiceId(voice: string): string {
@@ -47,11 +55,21 @@ Deno.serve(async (req: Request) => {
       return new Response('not_entitled', { status: 403, headers: corsHeaders });
     }
     try {
-      const { entitled } = await loadEntitlement(serviceClient(), caller.userId);
+      const svc = serviceClient();
+      const { entitled } = await loadEntitlement(svc, caller.userId);
       if (!entitled) {
-        return new Response('not_entitled', { status: 403, headers: corsHeaders });
+        // Value-first parity with `turn`: a non-entitled caller may still hear
+        // Camille while inside the one-time free taste. Previously tts 403'd every
+        // non-subscriber, so a free user got text replies (turn admits them) but
+        // dead silence (tts denied the audio) — voice only worked on already-
+        // subscribed accounts. Gate on the same lifetime budget `turn` uses.
+        const freeUsedMs = await loadLifetimeElapsedMs(svc, caller.userId);
+        if (freeUsedMs >= FREE_TASTE_MS) {
+          return new Response('not_entitled', { status: 403, headers: corsHeaders });
+        }
       }
     } catch (e) {
+      // Fail open on a genuine infra error so paying users aren't blocked (matches turn).
       console.error('tts entitlement check failed', e instanceof Error ? e.message : e);
     }
 
