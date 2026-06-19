@@ -16,7 +16,17 @@
 import { corsHeaders, json } from '../_shared/cors.ts';
 import { resolveCaller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
-import { loadEntitlement } from '../_shared/caps.ts';
+import { loadEntitlement, loadLifetimeElapsedMs } from '../_shared/caps.ts';
+
+/**
+ * Free-taste allowance — MUST match FREE_TASTE_MS in `turn/index.ts` and
+ * `tts/index.ts` (and FREE_TASTE_SECONDS in the subscription store). Without
+ * parity here, streaming STT 403'd every non-subscriber, forcing the client to
+ * fall back to the device recognizer: degraded en-US captions for beginners and
+ * a "…" placeholder bubble until the reply. Voice streaming only worked on
+ * already-entitled accounts.
+ */
+const FREE_TASTE_MS = 10 * 60 * 1000;
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -39,11 +49,20 @@ Deno.serve(async (req: Request) => {
       return json({ reason: 'not_entitled' }, 403);
     }
     try {
-      const { entitled } = await loadEntitlement(serviceClient(), caller.userId);
+      const svc = serviceClient();
+      const { entitled } = await loadEntitlement(svc, caller.userId);
       if (!entitled) {
-        return json({ reason: 'not_entitled' }, 403);
+        // Value-first parity with `turn`/`tts`: a non-entitled caller may stream
+        // until their lifetime conversation time crosses FREE_TASTE_MS. Denying
+        // them here forced the degraded device-recognizer fallback (en-US caption
+        // mangling, "…" placeholder bubble) on every free user.
+        const freeUsedMs = await loadLifetimeElapsedMs(svc, caller.userId);
+        if (freeUsedMs >= FREE_TASTE_MS) {
+          return json({ reason: 'not_entitled' }, 403);
+        }
       }
     } catch (e) {
+      // Fail open on a genuine infra error so paying users aren't blocked (matches tts/turn).
       console.error('stt-token entitlement check failed', e instanceof Error ? e.message : e);
     }
 
