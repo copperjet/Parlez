@@ -12,6 +12,7 @@ import {
   type NativeSyntheticEvent,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -111,6 +112,10 @@ function ConversationSession() {
   }, [sttUnavailable]);
 
   const listRef = useRef<FlatList<Message>>(null);
+  // Live-caption scroll, pinned to the bottom: as the user keeps talking, newer
+  // words stay visible and earlier words scroll up out of view (a long turn no
+  // longer clips to two lines showing only the opening words).
+  const liveScrollRef = useRef<ScrollView>(null);
   // Auto-scroll only when the user is already pinned to the bottom. Without this
   // gate, every content-size change (a reply landing, the pending bubble growing,
   // a re-measure on app re-open) yanked the list back to the end — so the user
@@ -310,9 +315,15 @@ function ConversationSession() {
         />
 
         {liveTranscript ? (
-          <Text style={[styles.live, { color: colors.textFaint }]} numberOfLines={2}>
-            {liveTranscript}
-          </Text>
+          <ScrollView
+            ref={liveScrollRef}
+            style={styles.liveScroll}
+            contentContainerStyle={styles.liveContent}
+            onContentSizeChange={() => liveScrollRef.current?.scrollToEnd({ animated: true })}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled">
+            <Text style={[styles.live, { color: colors.textFaint }]}>{liveTranscript}</Text>
+          </ScrollView>
         ) : null}
 
         <View
@@ -617,6 +628,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   bannerText: { fontSize: FontSize.caption, textAlign: 'center' },
+  liveScroll: {
+    // ~3 lines tall, then it scrolls — bounds a long turn without clipping it.
+    maxHeight: FontSize.caption * 1.4 * 3,
+    alignSelf: 'stretch',
+  },
+  liveContent: {
+    // Pin text to the bottom so the most-recent words sit at the visible edge.
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+  },
   live: {
     fontSize: FontSize.caption,
     fontStyle: 'italic',

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Parlez",
     "slug": "Parlez",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "parlez",
@@ -26,7 +26,7 @@
     },
     "android": {
       "package": "com.denny32.parlez",
-      "versionCode": 26,
+      "versionCode": 27,
       "adaptiveIcon": {
         "backgroundColor": "#FBF9F6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
