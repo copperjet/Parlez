@@ -197,6 +197,11 @@ export async function wipeLocalAccountData(): Promise<void> {
     clearActivity(),
     saveProfileSummary(''),
   ]);
+  // Streak/activity just reset → drop any stale "streak at risk" rescue.
+  // Lazy import: keeps this module free of a static notifications dependency.
+  void import('@/lib/notifications')
+    .then((m) => m.reconcileReminders())
+    .catch(() => {});
 }
 
 /**

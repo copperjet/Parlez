@@ -58,6 +58,12 @@ export default function Privacy() {
             void clearStreak();
             void clearActivity();
             void saveProfileSummary('');
+            // Streak is gone → drop any pending "streak at risk" rescue. Daily
+            // reminders stay if the setting is on — deleting data isn't opting
+            // out of reminders. Lazy import (avoids loading it on web paths).
+            void import('@/lib/notifications')
+              .then((m) => m.reconcileReminders())
+              .catch(() => {});
             // Wait for the subscription/entitlement reset to land BEFORE routing.
             // It flips the user to un-entitled, so the destination has to be the
             // top-level gate, not router.back() into the live conversation: that

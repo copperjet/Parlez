@@ -20,6 +20,12 @@ function sanitizeSettings(raw: Partial<Settings>): Settings {
   if (!VALID_CHAT_THEMES.includes(merged.chatTheme)) {
     merged.chatTheme = DEFAULT_SETTINGS.chatTheme;
   }
+  if (typeof merged.remindersEnabled !== 'boolean') {
+    merged.remindersEnabled = DEFAULT_SETTINGS.remindersEnabled;
+  }
+  if (!/^\d{2}:\d{2}$/.test(merged.reminderTime)) {
+    merged.reminderTime = DEFAULT_SETTINGS.reminderTime;
+  }
   return merged;
 }
 
@@ -360,6 +366,31 @@ export async function loadStreakCelebratedDate(): Promise<string | null> {
 
 export function saveStreakCelebratedDate(date: string): Promise<void> {
   return saveKv({ streakCelebratedDate: date });
+}
+
+/**
+ * The local day (YYYY-MM-DD) we first showed the OS notification-permission
+ * prompt — stamped once so the unprompted ask happens a single time, right
+ * after the first completed session (the Settings toggle is the explicit
+ * re-entry path after that).
+ */
+export async function loadNotifPromptedAt(): Promise<string | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const row = await db.getFirstAsync<{ value: string }>(
+      'SELECT value FROM kv WHERE key = ?',
+      'notifPromptedAt',
+    );
+    const v = (row?.value ?? '').trim();
+    return v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveNotifPromptedAt(date: string): Promise<void> {
+  return saveKv({ notifPromptedAt: date });
 }
 
 /** Persist the consolidation counter so it survives a relaunch. */

@@ -356,6 +356,12 @@ export async function refreshStreakFromHistory(): Promise<void> {
     }
     s.setStreak(streak, lastDate ?? null);
     await saveStreak(streak, lastDate ?? null);
+    // Streak state changed → the reminder schedule depends on it (today's
+    // reminder + rescue are cancelled the moment the goal is met). Lazy import:
+    // notifications.ts reads this module's helpers, so a static one would cycle.
+    void import('@/lib/notifications')
+      .then((m) => m.reconcileReminders())
+      .catch(() => {});
   } catch {
     // Best-effort — streak is UX polish, never blocks Marie.
   }

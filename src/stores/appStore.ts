@@ -44,6 +44,8 @@ export const DEFAULT_SETTINGS: Settings = {
   micSensitivity: 'auto',
   haptics: true,
   chatTheme: 'ember',
+  remindersEnabled: true,
+  reminderTime: '18:00',
 };
 
 interface AppStore {

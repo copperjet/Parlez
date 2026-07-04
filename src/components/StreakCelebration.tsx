@@ -14,6 +14,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, ZoomIn } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 
+import { maybePromptAfterFirstGoal } from '@/lib/notifications';
 import { flameTierFor } from '@/lib/streak';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
@@ -44,7 +45,12 @@ export function StreakCelebration() {
   if (streak == null) return null;
 
   const tier = flameTierFor(Math.max(1, streak));
-  const close = () => dismiss(null);
+  const close = () => {
+    dismiss(null);
+    // First goal just met — the one sanctioned moment for the OS notification
+    // prompt ("keep your streak" context). Self-gated: no-op on days 2+.
+    void maybePromptAfterFirstGoal();
+  };
 
   return (
     <Animated.View

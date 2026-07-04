@@ -1,6 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -18,6 +29,11 @@ import {
   saveSettings,
   saveTurnsSinceConsolidation,
 } from '@/lib/db/sessions';
+import {
+  getNotificationPermission,
+  reconcileReminders,
+  requestNotificationPermission,
+} from '@/lib/notifications';
 import { FontSize, Radius, Spacing, THEME_OPTIONS, useTheme } from '@/lib/theme';
 import type { ChatThemeId, Settings as AppSettings } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
@@ -38,6 +54,15 @@ const SENSITIVITY: { id: 'auto' | 'manual'; label: string }[] = [
 const VOICE_GENDERS: { id: VoiceGender; label: string }[] = [
   { id: 'female', label: 'Female' },
   { id: 'male', label: 'Male' },
+];
+
+// Preset reminder times, stored as 'HH:mm' so a free-form picker is a drop-in
+// swap later. "Night" sits before the 20:30 streak rescue on purpose.
+const REMINDER_TIMES: { id: string; label: string }[] = [
+  { id: '08:00', label: 'Morning' },
+  { id: '12:30', label: 'Noon' },
+  { id: '18:00', label: 'Evening' },
+  { id: '20:00', label: 'Night' },
 ];
 
 function Segmented<T extends string>({
@@ -122,6 +147,36 @@ export default function Settings() {
   const change = (patch: Partial<AppSettings>) => {
     updateSettings(patch);
     void saveSettings(useAppStore.getState().settings);
+  };
+
+  // OS-level permission mirrored into local state so the toggle reflects
+  // reality (e.g. the user revoked notifications in system settings).
+  const [notifGranted, setNotifGranted] = useState(false);
+  useEffect(() => {
+    void getNotificationPermission().then((s) => setNotifGranted(s === 'granted'));
+  }, []);
+
+  const toggleReminders = async (on: boolean) => {
+    if (!on) {
+      change({ remindersEnabled: false });
+      void reconcileReminders();
+      return;
+    }
+    const granted = await requestNotificationPermission();
+    setNotifGranted(granted);
+    if (granted) {
+      change({ remindersEnabled: true });
+      void reconcileReminders();
+    } else {
+      Alert.alert(
+        'Notifications are off',
+        'Enable notifications for Parlez in your system settings to get practice reminders.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+        ],
+      );
+    }
   };
 
   const confirmClear = () => {
@@ -240,6 +295,32 @@ export default function Settings() {
             trackColor={{ true: colors.accent, false: colors.border }}
           />
         </Row>
+
+        {Platform.OS !== 'web' ? (
+          <>
+            <Row label="Practice reminder">
+              <Switch
+                value={settings.remindersEnabled && notifGranted}
+                onValueChange={(on) => void toggleReminders(on)}
+                trackColor={{ true: colors.accent, false: colors.border }}
+              />
+            </Row>
+
+            {settings.remindersEnabled && notifGranted ? (
+              <View style={[styles.themeBlock, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Reminder time</Text>
+                <Segmented
+                  options={REMINDER_TIMES}
+                  value={settings.reminderTime}
+                  onChange={(reminderTime) => {
+                    change({ reminderTime });
+                    void reconcileReminders();
+                  }}
+                />
+              </View>
+            ) : null}
+          </>
+        ) : null}
 
         <Pressable
           onPress={() => router.push('/progress' as never)}

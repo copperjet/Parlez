@@ -124,4 +124,8 @@ export interface Settings {
   haptics: boolean;
   /** Chosen chat colour theme; light/dark is still driven by the device. */
   chatTheme: ChatThemeId;
+  /** Practice reminders master switch — effective only once OS permission is granted. */
+  remindersEnabled: boolean;
+  /** Daily reminder time as 'HH:mm' (24h, device-local). */
+  reminderTime: string;
 }

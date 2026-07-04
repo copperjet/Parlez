@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -8,6 +8,11 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { loadPersistedState } from '@/lib/db/sessions';
+import {
+  addReminderTapListener,
+  bootstrapNotifications,
+  reconcileReminders,
+} from '@/lib/notifications';
 import { initRevenueCat } from '@/lib/revenuecat';
 import { refreshStreakFromHistory } from '@/lib/streak';
 import { backfillAccountOwner, pushState } from '@/lib/sync';
@@ -34,8 +39,9 @@ export default function RootLayout() {
         ]);
         if (state) hydrate(state);
         // Recompute the streak from the activity ledger so a lapsed day is
-        // reflected on launch (not just after the next turn). Best-effort.
-        void refreshStreakFromHistory();
+        // reflected on launch (not just after the next turn), then set up
+        // practice reminders against that fresh streak. Best-effort.
+        void refreshStreakFromHistory().then(() => bootstrapNotifications());
       } catch {
         // Fall through to defaults.
       } finally {
@@ -69,8 +75,19 @@ export default function RootLayout() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'background' || next === 'inactive') void pushState();
+      // Foreground: re-derive the reminder schedule — catches a day rollover
+      // while backgrounded, permission changes made in OS settings, and keeps
+      // the rolling window topped up.
+      if (next === 'active') void reconcileReminders();
     });
     return () => sub.remove();
+  }, []);
+
+  // A tapped reminder lands the user in the conversation. Warm taps only:
+  // cold-start taps go through the index gate, which already routes onboarded
+  // users to /conversation.
+  useEffect(() => {
+    return addReminderTapListener(() => router.push('/conversation'));
   }, []);
 
   if (!hydrated) return null;
