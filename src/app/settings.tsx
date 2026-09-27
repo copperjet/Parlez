@@ -34,6 +34,11 @@ import {
   reconcileReminders,
   requestNotificationPermission,
 } from '@/lib/notifications';
+import {
+  fetchReferralInfo,
+  getCachedReferralRole,
+  type ReferralRole,
+} from '@/lib/services/supabaseService';
 import { FontSize, Radius, Spacing, THEME_OPTIONS, useTheme } from '@/lib/theme';
 import type { ChatThemeId, Settings as AppSettings } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
@@ -130,6 +135,26 @@ export default function Settings() {
 
   const isSignedIn = useAuthStore((s) => s.isSignedIn);
   const email = useAuthStore((s) => s.email);
+  const userId = useAuthStore((s) => s.userId);
+
+  // Partner accounts (designated creators/educators) get their dashboard in
+  // place of the invite screen. Cached for an instant render, then confirmed —
+  // only for signed-in users, since partners must be signed in.
+  const [referralRole, setReferralRole] = useState<ReferralRole>('user');
+  useEffect(() => {
+    let alive = true;
+    void getCachedReferralRole(userId).then((r) => {
+      if (alive) setReferralRole(r);
+    });
+    if (isSignedIn) {
+      void fetchReferralInfo().then((info) => {
+        if (alive && info) setReferralRole(info.role);
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [isSignedIn, userId]);
 
   // Right-side label for the Account row: reacts live to sign-in and plan.
   // Premium shows the plan even when signed out — subscription management
@@ -334,6 +359,36 @@ export default function Settings() {
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
           </View>
         </Pressable>
+
+        {referralRole === 'user' ? (
+          <Pressable
+            onPress={() => router.push('/referral' as never)}
+            accessibilityRole="button"
+            style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Refer a friend</Text>
+            <View style={styles.linkRight}>
+              <Text style={{ color: colors.textSecondary, fontSize: FontSize.caption }}>
+                Give 20 free minutes
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+            </View>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => router.push('/creator' as never)}
+            accessibilityRole="button"
+            style={[styles.linkRow, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>
+              {referralRole === 'creator' ? 'Creator dashboard' : 'Educator dashboard'}
+            </Text>
+            <View style={styles.linkRight}>
+              <Text style={{ color: colors.textSecondary, fontSize: FontSize.caption }}>
+                {referralRole === 'creator' ? 'Your earnings' : 'Your students'}
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+            </View>
+          </Pressable>
+        )}
 
         <Pressable
           onPress={() => router.push('/account')}

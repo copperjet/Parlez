@@ -31,6 +31,7 @@ import {
 const ENTITLEMENT_ID = 'premium';
 const USAGE_KEY = 'usage_today_v1';
 const FREE_USAGE_KEY = 'free_usage_v1';
+const FREE_ALLOWANCE_KEY = 'free_allowance_v1';
 
 /**
  * Free-taste allowance: lifetime conversation seconds a never-subscribed user
@@ -100,6 +101,14 @@ interface SubscriptionStore {
    */
   freeSecondsUsed: number;
 
+  /**
+   * Total free allowance in seconds: the base taste plus any referral bonus
+   * granted to this identity (redeemed a code, or earned referrer rewards).
+   * Mirrors the server's FREE_TASTE_MS + positive bonus_grants; the server
+   * stays authoritative — this only drives routing so the gate doesn't flash.
+   */
+  freeAllowanceSeconds: number;
+
   hydrateFromCache: () => Promise<void>;
   refresh: () => Promise<void>;
   /** Recompute per-user intro-trial eligibility for the offering's subscriptions. */
@@ -123,6 +132,9 @@ interface SubscriptionStore {
    *  aliased in). The server stays authoritative, so a fresh 0 self-corrects to a
    *  403 on the first turn if that identity is already past its free taste. */
   resetFreeUsage: () => void;
+  /** Adopt the server's allowance (base + referral bonuses) after a referral
+   *  get/redeem round-trip. Persisted so the extended taste survives relaunch. */
+  applyReferralAllowance: (allowanceSeconds: number) => void;
   resetDailyIfNewDay: () => void;
   recordTurnElapsed: (ms: number) => void;
   setCapBlocked: (opts: { tier: Exclude<Tier, null>; capSeconds: number }) => void;
@@ -219,6 +231,29 @@ async function readFreeUsage(): Promise<number> {
   }
 }
 
+async function persistFreeAllowance(seconds: number): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      FREE_ALLOWANCE_KEY,
+      String(Math.max(FREE_TASTE_SECONDS, Math.round(seconds))),
+    );
+  } catch {
+    // best-effort
+  }
+}
+
+async function readFreeAllowance(): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(FREE_ALLOWANCE_KEY);
+    const n = Number(raw ?? '0');
+    return Number.isFinite(n) && n > FREE_TASTE_SECONDS
+      ? Math.round(n)
+      : FREE_TASTE_SECONDS;
+  } catch {
+    return FREE_TASTE_SECONDS;
+  }
+}
+
 let listenerRegistered = false;
 
 export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
@@ -239,6 +274,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   capBlocked: false,
   capBlockedTier: null,
   freeSecondsUsed: 0,
+  freeAllowanceSeconds: FREE_TASTE_SECONDS,
 
   hydrateFromCache: async () => {
     const cached = await getCachedEntitlement();
@@ -407,6 +443,8 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       // sees zero lifetime usage and re-grants the free taste — so clear the local
       // mirror too, keeping client and server in agreement.
       await AsyncStorage.removeItem(FREE_USAGE_KEY);
+      // Referral bonuses belong to the departing identity, not the fresh anon id.
+      await AsyncStorage.removeItem(FREE_ALLOWANCE_KEY);
     } catch {
       // best-effort
     }
@@ -424,6 +462,7 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
       capBlocked: false,
       capBlockedTier: null,
       freeSecondsUsed: 0,
+      freeAllowanceSeconds: FREE_TASTE_SECONDS,
     });
   },
 
@@ -450,17 +489,28 @@ export const useSubscriptionStore = create<SubscriptionStore>((set, get) => ({
   },
 
   hydrateFreeUsageFromCache: async () => {
-    set({ freeSecondsUsed: await readFreeUsage() });
+    const [used, allowance] = await Promise.all([readFreeUsage(), readFreeAllowance()]);
+    set({ freeSecondsUsed: used, freeAllowanceSeconds: allowance });
   },
 
   exhaustFreeTaste: () => {
-    set({ freeSecondsUsed: FREE_TASTE_SECONDS });
-    void persistFreeUsage(FREE_TASTE_SECONDS);
+    // The server (authoritative) said no — snap the meter to the full current
+    // allowance so the local gate agrees, bonuses included.
+    const allowance = get().freeAllowanceSeconds;
+    set({ freeSecondsUsed: allowance });
+    void persistFreeUsage(allowance);
   },
 
   resetFreeUsage: () => {
-    set({ freeSecondsUsed: 0 });
+    set({ freeSecondsUsed: 0, freeAllowanceSeconds: FREE_TASTE_SECONDS });
     void AsyncStorage.removeItem(FREE_USAGE_KEY);
+    void AsyncStorage.removeItem(FREE_ALLOWANCE_KEY);
+  },
+
+  applyReferralAllowance: (allowanceSeconds) => {
+    const next = Math.max(FREE_TASTE_SECONDS, Math.round(allowanceSeconds));
+    set({ freeAllowanceSeconds: next });
+    void persistFreeAllowance(next);
   },
 
   hydrateUsageFromCache: async () => {

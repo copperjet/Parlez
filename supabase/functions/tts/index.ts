@@ -13,6 +13,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { resolveCaller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
 import { loadEntitlement, loadLifetimeElapsedMs } from '../_shared/caps.ts';
+import { loadBonusBalanceMs } from '../_shared/referral.ts';
 import { estimateTtsMicrocents } from '../_shared/pricing.ts';
 
 /**
@@ -65,7 +66,12 @@ Deno.serve(async (req: Request) => {
         // subscribed accounts. Gate on the same lifetime budget `turn` uses.
         const freeUsedMs = await loadLifetimeElapsedMs(svc, caller.userId);
         if (freeUsedMs >= FREE_TASTE_MS) {
-          return new Response('not_entitled', { status: 403, headers: corsHeaders });
+          // Referral bonus minutes extend the taste. Balance check only —
+          // consumption is metered on `/turn`, the same place the daily cap binds.
+          const bankMs = await loadBonusBalanceMs(svc, caller.userId);
+          if (bankMs <= 0) {
+            return new Response('not_entitled', { status: 403, headers: corsHeaders });
+          }
         }
       }
     } catch (e) {

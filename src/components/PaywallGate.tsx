@@ -7,13 +7,15 @@
  * Subscribes to freeSecondsUsed so crossing the allowance mid-session re-renders
  * the consumer and swaps it to read-only.
  */
-import { FREE_TASTE_SECONDS, useSubscriptionStore } from '@/stores/subscriptionStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 export function useCanConverse(): { canChat: boolean; ready: boolean } {
   const isPremium = useSubscriptionStore((s) => s.isPremium);
   const isTrialing = useSubscriptionStore((s) => s.isTrialing);
   const ready = useSubscriptionStore((s) => s.ready);
   const freeSecondsUsed = useSubscriptionStore((s) => s.freeSecondsUsed);
-  const hasFreeTaste = freeSecondsUsed < FREE_TASTE_SECONDS;
+  // Allowance = base taste + any referral bonus this identity holds.
+  const freeAllowanceSeconds = useSubscriptionStore((s) => s.freeAllowanceSeconds);
+  const hasFreeTaste = freeSecondsUsed < freeAllowanceSeconds;
   return { canChat: isPremium || isTrialing || hasFreeTaste, ready };
 }

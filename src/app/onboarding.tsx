@@ -1,13 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Application from 'expo-application';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
@@ -16,11 +19,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SPLASH_MS, voiceName } from '@/lib/constants';
 import { requestRecognitionPermissions } from '@/lib/audio/recognizer';
 import { saveOnboarding } from '@/lib/db/sessions';
+import { redeemReferralCode, type RedeemErrorCode } from '@/lib/services/supabaseService';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import type { OnboardingChoice } from '@/lib/types';
 import { useAppStore } from '@/stores/appStore';
 
-type Step = 'splash' | 'level' | 'permission';
+type Step = 'splash' | 'level' | 'referral' | 'permission';
+
+const REDEEM_ERROR_COPY: Record<RedeemErrorCode, string> = {
+  invalid_code: 'That code doesn’t look right — double-check it.',
+  own_code: 'That’s your own code — share it with a friend instead!',
+  already_redeemed: 'A code has already been used here.',
+  not_eligible: 'Codes are for new learners — you already have full access.',
+  code_exhausted: 'This code has reached its limit.',
+  network: 'Couldn’t check the code right now — you can skip and try later.',
+};
 
 const LEVEL_OPTIONS: { choice: OnboardingChoice; title: string; subtitle: string }[] = [
   { choice: 'nothing', title: 'Starting fresh', subtitle: 'I don’t know any French yet' },
@@ -43,16 +56,50 @@ export default function Onboarding() {
 
   const [step, setStep] = useState<Step>('splash');
   const [denied, setDenied] = useState(false);
+  const [code, setCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemed, setRedeemed] = useState(false);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setStep('level'), SPLASH_MS);
     return () => clearTimeout(t);
   }, []);
 
+  // Android installs carry the Play Install Referrer — a share link with
+  // ?referrer=referral_code%3DXXXX pre-fills the invite code so the referred
+  // friend doesn't have to type it. iOS has no equivalent; manual entry there.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    void Application.getInstallReferrerAsync()
+      .then((referrer) => {
+        const m = /(?:^|[?&])referral_code=([A-Za-z0-9-]+)/.exec(referrer ?? '');
+        if (m) setCode(m[1].toUpperCase());
+      })
+      .catch(() => {
+        // best-effort — the field just starts empty
+      });
+  }, []);
+
   const pickLevel = (choice: OnboardingChoice) => {
     completeOnboarding(choice);
     void saveOnboarding(choice, useAppStore.getState().level);
-    setStep('permission');
+    setStep('referral');
+  };
+
+  const redeem = async () => {
+    if (!code.trim() || redeeming) return;
+    setRedeeming(true);
+    setRedeemError(null);
+    const result = await redeemReferralCode(code);
+    setRedeeming(false);
+    if (result.ok) {
+      setRedeemed(true);
+      // Let the gift moment land, then move on.
+      setTimeout(() => setStep('permission'), 1400);
+    } else {
+      setRedeemError(REDEEM_ERROR_COPY[result.error]);
+    }
   };
 
   const askMic = async () => {
@@ -123,6 +170,85 @@ export default function Onboarding() {
               </Pressable>
             ))}
           </ScrollView>
+        </Animated.View>
+      ) : null}
+
+      {step === 'referral' ? (
+        <Animated.View entering={FadeIn.duration(400)} style={styles.flex}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.flex}>
+            <View style={styles.center}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                Did a friend send you?
+              </Text>
+              <Text style={[styles.tag, { color: colors.textSecondary }]}>
+                Enter their code and you both get more time with {personaName}.
+              </Text>
+              {redeemed ? (
+                <Text style={[styles.redeemedText, { color: colors.success }]}>
+                  Gift unlocked — double the free time with {personaName} 🎁
+                </Text>
+              ) : (
+                <>
+                  <TextInput
+                    value={code}
+                    onChangeText={(t) => {
+                      setCode(t.toUpperCase());
+                      setRedeemError(null);
+                    }}
+                    placeholder="INVITE CODE"
+                    placeholderTextColor={colors.textFaint}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={24}
+                    accessibilityLabel="Invite code"
+                    style={[
+                      styles.codeInput,
+                      {
+                        backgroundColor: colors.surfaceMuted,
+                        borderColor: redeemError ? colors.error : colors.border,
+                        color: colors.text,
+                      },
+                    ]}
+                  />
+                  {redeemError ? (
+                    <Text style={[styles.redeemError, { color: colors.error }]}>
+                      {redeemError}
+                    </Text>
+                  ) : null}
+                </>
+              )}
+            </View>
+
+            {!redeemed ? (
+              <View style={styles.actions}>
+                <Pressable
+                  onPress={redeem}
+                  disabled={!code.trim() || redeeming}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [
+                    styles.primary,
+                    {
+                      backgroundColor: colors.accent,
+                      opacity: !code.trim() || redeeming ? 0.4 : pressed ? 0.7 : 1,
+                    },
+                  ]}>
+                  <Text style={[styles.primaryText, { color: colors.onAccent }]}>
+                    {redeeming ? 'Checking…' : 'Redeem'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setStep('permission')}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.secondary, { opacity: pressed ? 0.6 : 1 }]}>
+                  <Text style={[styles.secondaryText, { color: colors.textSecondary }]}>
+                    No code — keep going
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </KeyboardAvoidingView>
         </Animated.View>
       ) : null}
 
@@ -218,6 +344,30 @@ const styles = StyleSheet.create({
     fontSize: FontSize.body,
     textAlign: 'center',
     marginTop: Spacing.md,
+    lineHeight: FontSize.body * 1.4,
+  },
+  codeInput: {
+    alignSelf: 'stretch',
+    marginTop: Spacing.lg,
+    borderWidth: 1,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md + 2,
+    fontSize: FontSize.title,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 3,
+  },
+  redeemError: {
+    fontSize: FontSize.caption,
+    textAlign: 'center',
+    lineHeight: FontSize.caption * 1.4,
+  },
+  redeemedText: {
+    fontSize: FontSize.body,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: Spacing.lg,
     lineHeight: FontSize.body * 1.4,
   },
   actions: { gap: Spacing.sm },

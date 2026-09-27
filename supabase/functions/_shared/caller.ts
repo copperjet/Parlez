@@ -42,6 +42,38 @@ export function resolveCallerFromJwt(req: Request): string | null {
   return decodeJwtSub(m[1]);
 }
 
+/** Minimal shape of a supabase-js client for auth verification — structural so
+ *  callers holding differently-parameterised clients all fit. */
+interface AuthVerifier {
+  auth: {
+    getUser(jwt: string): Promise<{
+      data: { user: { id: string; email?: string | null } | null } | null;
+    }>;
+  };
+}
+
+/**
+ * Resolve the caller from a bearer JWT whose signature is VERIFIED by the auth
+ * server (`auth.getUser`). Use this — not `resolveCaller` — for anything that
+ * serves sensitive data (earnings) or performs destructive actions: the
+ * decode-only path above can be forged by anyone who knows a user's uuid.
+ */
+export async function verifiedUser(
+  client: unknown,
+  req: Request,
+): Promise<{ id: string; email: string | null } | null> {
+  const auth = req.headers.get('authorization') ?? '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  try {
+    const { data } = await (client as AuthVerifier).auth.getUser(m[1]);
+    if (!data?.user) return null;
+    return { id: data.user.id, email: data.user.email ?? null };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Try the JWT first; if it doesn't resolve to a real user, fall back to the
  * caller-supplied `app_user_id`. Returns null when neither yields a usable id.

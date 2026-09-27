@@ -29,6 +29,12 @@ import {
   tierCapSeconds,
 } from '../_shared/caps.ts';
 import {
+  ACTIVATION_THRESHOLD_MS,
+  consumeBonus,
+  creditReferrerOnActivation,
+  loadBonusBalanceMs,
+} from '../_shared/referral.ts';
+import {
   estimateClaudeMicrocents,
   estimateScribeMicrocents,
   estimateScribeRealtimeMicrocents,
@@ -579,6 +585,10 @@ Deno.serve(async (req: Request) => {
     if (!caller) {
       return json({ reason: 'not_entitled' }, 403);
     }
+    // Set when this turn is only admitted because the caller holds referral
+    // bonus minutes — the closing usage log then draws the turn's elapsed time
+    // down from the bank.
+    let drawFromBank = false;
     try {
       const svc = serviceClient();
       const { tier, entitled } = await loadEntitlement(svc, caller.userId);
@@ -588,8 +598,20 @@ Deno.serve(async (req: Request) => {
         // Lifetime (not daily) so the allowance is genuinely one-time and a
         // churned subscriber — already well past it — is never re-granted free time.
         const freeUsedMs = await loadLifetimeElapsedMs(svc, caller.userId);
+        if (freeUsedMs >= ACTIVATION_THRESHOLD_MS) {
+          // Referral funnel: enough real conversation to count as activated.
+          // Fire-and-forget — no-op unless a pending referral row exists.
+          void creditReferrerOnActivation(svc, caller.userId).catch((e) =>
+            console.error('referral activation credit failed', e instanceof Error ? e.message : e),
+          );
+        }
         if (freeUsedMs >= FREE_TASTE_MS) {
-          return json({ reason: 'not_entitled' }, 403);
+          // Past the base taste — referral bonus minutes may extend it.
+          const bankMs = await loadBonusBalanceMs(svc, caller.userId);
+          if (bankMs <= 0) {
+            return json({ reason: 'not_entitled' }, 403);
+          }
+          drawFromBank = true;
         }
         // Under the allowance — serve this turn for free (no tier cap applies).
       } else {
@@ -597,15 +619,20 @@ Deno.serve(async (req: Request) => {
         if (cap !== null) {
           const usedMs = await loadTodayElapsedMs(svc, caller.userId);
           if (usedMs >= cap * 1000) {
-            return json(
-              {
-                reason: 'daily_cap',
-                tier,
-                cap_seconds: cap,
-                used_seconds: Math.round(usedMs / 1000),
-              },
-              402,
-            );
+            // Daily cap hit — banked referral minutes buy extra time today.
+            const bankMs = await loadBonusBalanceMs(svc, caller.userId);
+            if (bankMs <= 0) {
+              return json(
+                {
+                  reason: 'daily_cap',
+                  tier,
+                  cap_seconds: cap,
+                  used_seconds: Math.round(usedMs / 1000),
+                },
+                402,
+              );
+            }
+            drawFromBank = true;
           }
         }
       }
@@ -710,6 +737,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (caller) {
+      const elapsedMs = userSpeechMs + estimateSpeechMs(ai.speechText.length);
       logUsage({
         user_id: caller.userId,
         is_anon: caller.isAnon,
@@ -722,9 +750,20 @@ Deno.serve(async (req: Request) => {
         // SUM(elapsed_ms) for the cap doesn't double-count. It's *conversation*
         // time (user speech + Marie's reply), not fn compute time, so the cap
         // binds on real practice minutes and can't be sidestepped by sideloaders.
-        elapsed_ms: userSpeechMs + estimateSpeechMs(ai.speechText.length),
+        elapsed_ms: elapsedMs,
         estimated_cost_microcents: estimateClaudeMicrocents(usage).toString(),
       });
+      if (drawFromBank) {
+        // This turn only ran on banked referral minutes — draw it down.
+        // Non-blocking, same failure posture as logUsage.
+        try {
+          void consumeBonus(serviceClient(), caller.userId, elapsedMs).catch((e) =>
+            console.error('bonus consume failed', e instanceof Error ? e.message : e),
+          );
+        } catch (e) {
+          console.error('serviceClient unavailable', e instanceof Error ? e.message : e);
+        }
+      }
     }
 
     return json({ transcript, ...ai });

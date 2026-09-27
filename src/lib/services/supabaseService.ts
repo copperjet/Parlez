@@ -6,12 +6,14 @@
  * Supabase URL + anon key are configured (see lib/env.ts). The app code never
  * depends on this directly — only on the ConversationService interface.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { SPEECH_SPEEDS, type MarieVoiceId, type SpeechSpeed } from '@/lib/constants';
 import { ENV, functionsBase, useSupabaseService } from '@/lib/env';
 import { getCallerId } from '@/lib/revenuecat';
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/authStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import type {
   Correction,
@@ -111,6 +113,324 @@ export async function deleteAccountOnServer(): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Referral API — the `referral` Edge Function (get own code / redeem a code).
+// Works for anonymous callers via app_user_id, same as turn/tts: a referee
+// redeems during onboarding, before any account exists. On success both calls
+// adopt the server's allowance into the subscription store so the free-taste
+// gate honours the bonus immediately.
+// ---------------------------------------------------------------------------
+
+export interface ReferralStats {
+  joined: number;
+  activated: number;
+  purchased: number;
+}
+
+/** `creator`/`educator` = the account owns a partner code and gets the
+ *  dashboard in Settings; everyone else gets the regular invite screen. */
+export type ReferralRole = 'user' | 'creator' | 'educator';
+
+export interface ReferralInfo {
+  code: string;
+  role: ReferralRole;
+  stats: ReferralStats;
+  grantedSeconds: number;
+  allowanceSeconds: number;
+  mayRedeem: boolean;
+}
+
+export interface CreatorConversion {
+  purchasedAt: string;
+  plan: string | null;
+  /** Creator only; null when the store didn't report a price. */
+  commissionUsd?: number | null;
+  status: 'pending' | 'eligible' | 'refunded';
+}
+
+export interface CreatorDashboard {
+  role: 'creator' | 'educator';
+  code: string;
+  label: string | null;
+  funnel: { joined: number; activated: number; purchased: number; refunded: number };
+  /** Creator only. */
+  earnings?: {
+    rate: number;
+    pendingUsd: number;
+    availableUsd: number;
+    paidUsd: number;
+    holdbackDays: number;
+    minPayoutUsd: number;
+  };
+  conversions: CreatorConversion[];
+  /** Creator only. */
+  payouts?: { paidAt: string; amountUsd: number; method: string | null }[];
+}
+
+/** Dev/mock only: which partner role the mock service pretends the user has. */
+const MOCK_ROLE = (process.env.EXPO_PUBLIC_MOCK_REFERRAL_ROLE ?? '') as ReferralRole | '';
+
+const ROLE_CACHE_KEY = 'referral_role_v1';
+
+function asRole(v: unknown): ReferralRole {
+  return v === 'creator' || v === 'educator' ? v : 'user';
+}
+
+/**
+ * Last known partner role for this signed-in account, so Settings renders the
+ * right row instantly. Keyed by user id: a different account signing in on the
+ * device never inherits someone else's dashboard entry. Signed-out → 'user'
+ * (partners must be signed in).
+ */
+export async function getCachedReferralRole(userId: string | null): Promise<ReferralRole> {
+  if (!useSupabaseService) return MOCK_ROLE || 'user';
+  if (!userId) return 'user';
+  try {
+    const raw = await AsyncStorage.getItem(ROLE_CACHE_KEY);
+    if (!raw) return 'user';
+    const parsed = JSON.parse(raw) as { userId?: string; role?: string };
+    return parsed.userId === userId ? asRole(parsed.role) : 'user';
+  } catch {
+    return 'user';
+  }
+}
+
+async function cacheReferralRole(role: ReferralRole): Promise<void> {
+  const userId = useAuthStore.getState().userId;
+  if (!userId) return;
+  try {
+    await AsyncStorage.setItem(ROLE_CACHE_KEY, JSON.stringify({ userId, role }));
+  } catch {
+    // best-effort
+  }
+}
+
+export type RedeemErrorCode =
+  | 'invalid_code'
+  | 'own_code'
+  | 'already_redeemed'
+  | 'not_eligible'
+  | 'code_exhausted'
+  | 'network';
+
+export type RedeemResult =
+  | { ok: true; allowanceSeconds: number }
+  | { ok: false; error: RedeemErrorCode };
+
+async function callReferral(
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+  try {
+    const headers = await authHeaders();
+    const appUserId = await getCallerId();
+    const res = await fetch(`${functionsBase()}/referral`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, app_user_id: appUserId ?? undefined }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The caller's own share code + funnel stats. Null on network failure. */
+export async function fetchReferralInfo(): Promise<ReferralInfo | null> {
+  if (!useSupabaseService) {
+    // Mock/dev without keys — a plausible stub so the referral UI is testable.
+    return {
+      code: 'MOCK42',
+      role: MOCK_ROLE || 'user',
+      stats: { joined: 0, activated: 0, purchased: 0 },
+      grantedSeconds: 0,
+      allowanceSeconds: 600,
+      mayRedeem: true,
+    };
+  }
+  const data = await callReferral({ action: 'get' });
+  if (!data || typeof data.code !== 'string') return null;
+  const stats = (data.stats ?? {}) as Record<string, unknown>;
+  const role = asRole(data.role);
+  void cacheReferralRole(role);
+  const info: ReferralInfo = {
+    code: data.code,
+    role,
+    stats: {
+      joined: Number(stats.joined ?? 0),
+      activated: Number(stats.activated ?? 0),
+      purchased: Number(stats.purchased ?? 0),
+    },
+    grantedSeconds: Number(data.granted_seconds ?? 0),
+    allowanceSeconds: Number(data.allowance_seconds ?? 600),
+    mayRedeem: data.may_redeem === true,
+  };
+  useSubscriptionStore.getState().applyReferralAllowance(info.allowanceSeconds);
+  return info;
+}
+
+/** Redeem a code for this identity. Applies the new allowance on success. */
+export async function redeemReferralCode(code: string): Promise<RedeemResult> {
+  if (!useSupabaseService) {
+    useSubscriptionStore.getState().applyReferralAllowance(1200);
+    return { ok: true, allowanceSeconds: 1200 };
+  }
+  const data = await callReferral({ action: 'redeem', code });
+  if (!data) return { ok: false, error: 'network' };
+  if (data.ok === true) {
+    const allowanceSeconds = Number(data.allowance_seconds ?? 1200);
+    useSubscriptionStore.getState().applyReferralAllowance(allowanceSeconds);
+    return { ok: true, allowanceSeconds };
+  }
+  const err = typeof data.error === 'string' ? data.error : 'network';
+  const known: RedeemErrorCode[] = [
+    'invalid_code',
+    'own_code',
+    'already_redeemed',
+    'not_eligible',
+    'code_exhausted',
+  ];
+  return {
+    ok: false,
+    error: known.includes(err as RedeemErrorCode) ? (err as RedeemErrorCode) : 'network',
+  };
+}
+
+function mockDashboard(role: 'creator' | 'educator'): CreatorDashboard {
+  const day = 24 * 3600 * 1000;
+  const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * day).toISOString();
+  const isCreator = role === 'creator';
+  const conv = (
+    daysAgo: number,
+    plan: string,
+    usd: number,
+    status: CreatorConversion['status'],
+  ): CreatorConversion => ({
+    purchasedAt: iso(daysAgo),
+    plan,
+    ...(isCreator ? { commissionUsd: usd } : {}),
+    status,
+  });
+  return {
+    role,
+    code: isCreator ? 'MARIEFR' : 'PROFDUPONT',
+    label: isCreator ? 'Marie French TikTok' : 'M. Dupont — Alliance Française',
+    funnel: { joined: 48, activated: 31, purchased: 6, refunded: 1 },
+    ...(isCreator
+      ? {
+          earnings: {
+            rate: 0.3,
+            pendingUsd: 45.9,
+            availableUsd: 26.75,
+            paidUsd: 22.95,
+            holdbackDays: 60,
+            minPayoutUsd: 25,
+          },
+          payouts: [{ paidAt: iso(20), amountUsd: 22.95, method: 'PayPal' }],
+        }
+      : {}),
+    conversions: [
+      conv(3, 'annual', 22.95, 'pending'),
+      conv(12, 'annual', 22.95, 'pending'),
+      conv(40, 'monthly', 3.8, 'refunded'),
+      conv(64, 'monthly', 3.8, 'eligible'),
+      conv(70, 'annual', 22.95, 'eligible'),
+      conv(88, 'annual', 22.95, 'eligible'),
+    ],
+  };
+}
+
+/**
+ * The signed-in partner's dashboard. `'signed_out'` when there's no verified
+ * session (401), `'not_partner'` when the account has no creator/educator code,
+ * null on network failure.
+ */
+export async function fetchCreatorDashboard(): Promise<
+  CreatorDashboard | 'signed_out' | 'not_partner' | null
+> {
+  if (!useSupabaseService) {
+    const role = MOCK_ROLE || 'creator';
+    return role === 'user' ? 'not_partner' : mockDashboard(role);
+  }
+  if (!useAuthStore.getState().isSignedIn) return 'signed_out';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+  let data: Record<string, unknown>;
+  try {
+    const res = await fetch(`${functionsBase()}/referral`, {
+      method: 'POST',
+      headers: { ...(await authHeaders()), 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'dashboard' }),
+      signal: controller.signal,
+    });
+    if (res.status === 401) return 'signed_out';
+    if (!res.ok) return null;
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const role = asRole(data.role);
+  void cacheReferralRole(role);
+  if (role === 'user' || typeof data.code !== 'string') return 'not_partner';
+
+  const f = (data.funnel ?? {}) as Record<string, unknown>;
+  const e = data.earnings as Record<string, unknown> | undefined;
+  const conversions = Array.isArray(data.conversions)
+    ? (data.conversions as Record<string, unknown>[]).map((c) => ({
+        purchasedAt: String(c.purchased_at ?? ''),
+        plan: typeof c.plan === 'string' ? c.plan : null,
+        ...('commission_usd' in c
+          ? { commissionUsd: c.commission_usd === null ? null : Number(c.commission_usd) }
+          : {}),
+        status: (c.status === 'eligible' || c.status === 'refunded'
+          ? c.status
+          : 'pending') as CreatorConversion['status'],
+      }))
+    : [];
+  return {
+    role,
+    code: data.code,
+    label: typeof data.label === 'string' ? data.label : null,
+    funnel: {
+      joined: Number(f.joined ?? 0),
+      activated: Number(f.activated ?? 0),
+      purchased: Number(f.purchased ?? 0),
+      refunded: Number(f.refunded ?? 0),
+    },
+    ...(e
+      ? {
+          earnings: {
+            rate: Number(e.rate ?? 0.3),
+            pendingUsd: Number(e.pending_usd ?? 0),
+            availableUsd: Number(e.available_usd ?? 0),
+            paidUsd: Number(e.paid_usd ?? 0),
+            holdbackDays: Number(e.holdback_days ?? 60),
+            minPayoutUsd: Number(e.min_payout_usd ?? 25),
+          },
+        }
+      : {}),
+    conversions,
+    ...(Array.isArray(data.payouts)
+      ? {
+          payouts: (data.payouts as Record<string, unknown>[]).map((p) => ({
+            paidAt: String(p.paid_at ?? ''),
+            amountUsd: Number(p.amount_usd ?? 0),
+            method: typeof p.method === 'string' ? p.method : null,
+          })),
+        }
+      : {}),
+  };
 }
 
 

@@ -17,6 +17,7 @@ import { corsHeaders, json } from '../_shared/cors.ts';
 import { resolveCaller } from '../_shared/caller.ts';
 import { serviceClient } from '../_shared/db.ts';
 import { loadEntitlement, loadLifetimeElapsedMs } from '../_shared/caps.ts';
+import { loadBonusBalanceMs } from '../_shared/referral.ts';
 
 /**
  * Free-taste allowance — MUST match FREE_TASTE_MS in `turn/index.ts` and
@@ -58,7 +59,12 @@ Deno.serve(async (req: Request) => {
         // mangling, "…" placeholder bubble) on every free user.
         const freeUsedMs = await loadLifetimeElapsedMs(svc, caller.userId);
         if (freeUsedMs >= FREE_TASTE_MS) {
-          return json({ reason: 'not_entitled' }, 403);
+          // Referral bonus minutes extend the taste. Balance check only —
+          // consumption is metered on `/turn`, like the daily cap.
+          const bankMs = await loadBonusBalanceMs(svc, caller.userId);
+          if (bankMs <= 0) {
+            return json({ reason: 'not_entitled' }, 403);
+          }
         }
       }
     } catch (e) {

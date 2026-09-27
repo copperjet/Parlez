@@ -15,9 +15,11 @@ import Animated, { FadeIn, FadeOut, ZoomIn } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 
 import { maybePromptAfterFirstGoal } from '@/lib/notifications';
-import { flameTierFor } from '@/lib/streak';
+import { getCachedReferralRole } from '@/lib/services/supabaseService';
+import { flameTierFor, STREAK_MILESTONES } from '@/lib/streak';
 import { FontSize, Radius, Spacing, useTheme } from '@/lib/theme';
 import { useAppStore } from '@/stores/appStore';
+import { useAuthStore } from '@/stores/authStore';
 
 const BURNING_FLAME = require('../../assets/images/burning flame.gif');
 
@@ -86,6 +88,27 @@ export function StreakCelebration() {
           <Text style={[styles.linkText, { color: colors.textSecondary }]}>See your streak</Text>
           <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
         </Pressable>
+        {(STREAK_MILESTONES as readonly number[]).includes(streak) ? (
+          // Referral nudge on the emotional peak (milestone days only) — the
+          // strategy doc's "surface at the streak high, never on a cold screen".
+          <Pressable
+            onPress={() => {
+              close();
+              // Partners share their creator/educator code (the one that
+              // earns them commission), not a personal invite code.
+              void getCachedReferralRole(useAuthStore.getState().userId).then((role) =>
+                router.push((role === 'user' ? '/referral' : '/creator') as never),
+              );
+            }}
+            accessibilityRole="button"
+            hitSlop={8}
+            style={styles.link}>
+            <Text style={[styles.linkText, { color: colors.textSecondary }]}>
+              Give a friend their first conversation
+            </Text>
+            <Ionicons name="gift-outline" size={14} color={colors.textSecondary} />
+          </Pressable>
+        ) : null}
       </Animated.View>
     </Animated.View>
   );

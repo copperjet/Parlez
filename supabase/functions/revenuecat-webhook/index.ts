@@ -11,6 +11,11 @@
  */
 import { corsHeaders } from '../_shared/cors.ts';
 import { serviceClient } from '../_shared/db.ts';
+import {
+  creditReferrerOnPurchase,
+  markReferralRefunded,
+  type PurchaseInfo,
+} from '../_shared/referral.ts';
 
 type Tier = 'monthly' | 'annual' | 'lifetime';
 type Status = 'active' | 'trialing' | 'in_grace' | 'expired' | 'cancelled';
@@ -144,6 +149,56 @@ Deno.serve(async (req: Request) => {
     );
     if (error) {
       console.error('subscriptions upsert failed', error.message);
+    }
+
+    // Referral funnel. Check the event's aliases too — the referee may have
+    // redeemed under an anon id before signing in. Both paths are idempotent,
+    // so RC retries reposting the same event are harmless.
+    const referralIds = new Set<string>([appUserId]);
+    if (Array.isArray(event.aliases)) {
+      for (const a of event.aliases as unknown[]) {
+        if (typeof a === 'string' && a) referralIds.add(a);
+      }
+    }
+
+    // The first REAL payment completes the referee's ladder. Three shapes:
+    // an immediate subscription purchase, the conversion at the end of the
+    // 7-day intro trial (arrives as RENEWAL, not INITIAL_PURCHASE), and a
+    // lifetime one-time purchase (NON_RENEWING_PURCHASE).
+    const isFirstPayment =
+      (eventType === 'INITIAL_PURCHASE' && periodType !== 'TRIAL') ||
+      (eventType === 'RENEWAL' && event.is_trial_conversion === true) ||
+      eventType === 'NON_RENEWING_PURCHASE';
+    if (isFirstPayment) {
+      const num = (v: unknown): number | null =>
+        typeof v === 'number' && Number.isFinite(v) ? v : null;
+      const takehome = num(event.takehome_percentage);
+      const purchase: PurchaseInfo = {
+        plan: tier,
+        grossUsd: num(event.price),
+        taxPct: num(event.tax_percentage),
+        storeFeePct:
+          num(event.commission_percentage) ?? (takehome !== null ? 1 - takehome : null),
+      };
+      for (const id of referralIds) {
+        try {
+          await creditReferrerOnPurchase(svc, id, purchase);
+        } catch (e) {
+          console.error('referral purchase credit failed', e instanceof Error ? e.message : e);
+        }
+      }
+    }
+
+    // A store refund arrives as CANCELLATION with cancel_reason CUSTOMER_SUPPORT.
+    // Flag the referral so its creator commission never becomes payable.
+    if (eventType === 'CANCELLATION' && event.cancel_reason === 'CUSTOMER_SUPPORT') {
+      for (const id of referralIds) {
+        try {
+          await markReferralRefunded(svc, id);
+        } catch (e) {
+          console.error('referral refund mark failed', e instanceof Error ? e.message : e);
+        }
+      }
     }
   } catch (e) {
     console.error('webhook handler failed', e instanceof Error ? e.message : e);

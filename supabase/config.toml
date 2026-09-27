@@ -26,3 +26,8 @@ verify_jwt = false
 # the function; the public web form (Play data-safety link) is unauthenticated.
 [functions.delete-account]
 verify_jwt = false
+
+# Referral/affiliate code API. Same self-auth model as turn/tts — anonymous
+# onboarding users redeem via their app_user_id before any account exists.
+[functions.referral]
+verify_jwt = false

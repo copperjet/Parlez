@@ -19,6 +19,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+import { verifiedUser } from '../_shared/caller.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const RC_API = 'https://api.revenuecat.com/v1/subscribers';
@@ -119,6 +120,40 @@ async function deleteUsageAndSubscription(
   } catch {
     // best-effort
   }
+  // Referral footprint. The user's own rows (their redemption as referee, their
+  // bonus ledger) are deleted outright. Rows that OTHER users' data hangs off —
+  // their share code (FK target of other referees' redemptions, so a hard
+  // delete would fail) and their referrer linkage on those redemptions — are
+  // tombstoned instead: identity scrubbed to the nil uuid, code deactivated.
+  // That erases the person while preserving every other referee's
+  // one-redemption-ever guard and funnel attribution.
+  const TOMBSTONE = '00000000-0000-0000-0000-000000000000';
+  try {
+    await client.from('referrals').delete().eq('referee_id', id);
+  } catch {
+    // best-effort
+  }
+  try {
+    await client
+      .from('referrals')
+      .update({ referrer_id: TOMBSTONE })
+      .eq('referrer_id', id);
+  } catch {
+    // best-effort
+  }
+  try {
+    await client
+      .from('referral_codes')
+      .update({ owner_id: TOMBSTONE, active: false, label: null })
+      .eq('owner_id', id);
+  } catch {
+    // best-effort
+  }
+  try {
+    await client.from('bonus_grants').delete().eq('user_id', id);
+  } catch {
+    // best-effort
+  }
 }
 
 async function lookupUserIdByEmail(
@@ -134,23 +169,6 @@ async function lookupUserIdByEmail(
         (u.email ?? '').toLowerCase() === email.toLowerCase(),
     );
     return user?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Resolve the caller from their bearer JWT (the in-app delete path). */
-async function userFromBearer(
-  client: ReturnType<typeof createClient>,
-  req: Request,
-): Promise<{ id: string; email: string | null } | null> {
-  const auth = req.headers.get('authorization') ?? '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  if (!m) return null;
-  try {
-    const { data } = await (client as any).auth.getUser(m[1]);
-    if (!data?.user) return null;
-    return { id: data.user.id, email: data.user.email ?? null };
   } catch {
     return null;
   }
@@ -193,7 +211,7 @@ Deno.serve(async (req: Request) => {
   });
 
   // In-app path: the caller is identified by their bearer JWT, no body needed.
-  const bearer = await userFromBearer(admin, req);
+  const bearer = await verifiedUser(admin, req);
 
   let email = '';
   let appUserId = '';
